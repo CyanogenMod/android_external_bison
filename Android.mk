@@ -74,7 +74,7 @@ LOCAL_MODULE_CLASS := EXECUTABLES
 LOCAL_IS_HOST_MODULE := true
 intermediates := $(call local-intermediates-dir)
 
-LOCAL_CFLAGS := -DHAVE_CONFIG_H -DPKGDATADIR=\"$(LOCAL_PATH)/data\"
+LOCAL_CFLAGS := -DHAVE_CONFIG_H -DPKGDATADIR=\"$(PWD)/$(LOCAL_PATH)/data\"
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/lib
