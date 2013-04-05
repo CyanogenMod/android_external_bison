@@ -1,11 +1,11 @@
 This is a port of GNU Bison @VERSION@ to MSDOS/DJGPP.
 
-Copyright (C) 2005, 2006 Free Software Foundation, Inc.
+Copyright (C) 2005-2012 Free Software Foundation, Inc.
 
-This program is free software; you can redistribute it and/or modify
+This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2, or (at your option)
-any later version.
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,8 +13,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software Foundation,
-Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 1.:     DJGPP specific changes.
@@ -46,8 +45,13 @@ Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 	This is done by forking and using pipes for the IPC.  MSDOS does not
 	support this functionality so this has been reproduced in the usual
 	way by redirecting stdin and stdout of bison and m4 to temporary files
-	and processing these files in sequence.  All the changes to the sources
-	are documented in the djgpp/diffs file.
+	and processing these files in sequence.
+	It should be noticed that due to the great amount of file names that do
+	not cleanly map to 8.3 file names, you will need an OS with LFN support
+	to configure and compile the sources. On Win98 this implies that the
+	generation of numeric tails for 8.3 file name aliases must be enabled
+	or the compilation will fail.
+
 
 	Please **read** the docs.
 
@@ -80,7 +84,7 @@ Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 	some more work to unpack, if LFN support is not available.  If LFN is
 	available then you can extract the source files from the archive with
 	any unzip program and proceed to the paragraph 3.3, below.  Any file
-	name issue will be handled by the the DJGPP configuration files.
+	name issue will be handled by the DJGPP configuration files.
 	To unpack the source distribution on SFN systems, first, you MUST use
 	the `djunpack' batch file to unzip the package.  That is because some
 	file names in the official distributions need to be changed to avoid
@@ -113,22 +117,19 @@ Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 3.3.:   To build the binaries you will need the following binary packages:
 	  djdev203.zip (or a later but NOT a prior version)
 	  bsh204b.zip  (or a later but NOT a prior version)
-	  gcc410b.zip, gpp410b.zip, bnu2161b.zip, mak3791b.zip,
-	  fil40b.zip, shl20jb.zip, txt20b.zip,
-	  txi48b.zip, grep24b.zip, sed415b.zip,
-	  m4-144b.zip.
+          gccNNNb.zip, gppNNN.zip, bnuNNNb.zip, makNNNb.zip, filNNNb.zip,
+          perlNNNb.zip, shlNNNb.zip, txtNNNb.zip, txiNNNb.zip, grepNNNb.zip,
+          sedNNNb.zip and m4NNN.zip
 
 	If you want to run the check you will need also:
-	  dif287b.zip
+	  difNNNb.zip
 
-	All this packages can be found in the v2gnu directory of any
+	NNN represents the latest version number of the binary packages. All
+	this packages can be found in the /v2gnu directory of any
 	ftp.delorie.com mirror.
 	You will need bsh204b.zip or later and *NOT* a prior version or
 	the build will fail.  The same applies to djdev203.zip.  Please note
-	that Bison requires m4-144b.zip or later to work properly.  All the
-	other packages are the ones I have used to build the binaries
-	from this source.  Previuos versions of this packages may do the
-	job as well but I have not tested this.
+	that Bison requires m4-144b.zip or later to work properly.
 
 3.4.:   If for some reason you want to reconfigure the package cd into the top
 	srcdir (bison-@TREE_VERSION@) and run the following commands:
@@ -178,7 +179,7 @@ Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 	This will install the products into your DJGPP installation tree given
 	by the default prefix "/dev/env/DJDIR".  If you prefer to install them
-	into some other directory you will have to set prefix to the appropiate
+	into some other directory you will have to set prefix to the appropriate
 	value:
 	  make install prefix=z:/some/other/place
 

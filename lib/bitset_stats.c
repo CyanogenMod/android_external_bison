@@ -1,10 +1,12 @@
 /* Bitset statistics.
-   Copyright (C) 2002, 2003, 2004, 2005, 2006 Free Software Foundation, Inc.
+
+   Copyright (C) 2002-2006, 2009-2012 Free Software Foundation, Inc.
+
    Contributed by Michael Hayes (m.hayes@elec.canterbury.ac.nz).
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation, either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -13,8 +15,7 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 /* This file is a wrapper bitset implementation for the other bitset
    implementations.  It provides bitset compatibility checking and
@@ -23,16 +24,15 @@
    operations get vectored through here and we then call the appropriate
    routines.  */
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
+#include <config.h>
+
+#include "bitset_stats.h"
 
 #include "bbitset.h"
 #include "abitset.h"
 #include "ebitset.h"
 #include "lbitset.h"
 #include "vbitset.h"
-#include "bitset_stats.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -253,15 +253,15 @@ bitset_stats_read (const char *file_name)
   if (file)
     {
       if (fread (&bitset_stats_info_data, sizeof (bitset_stats_info_data),
-		 1, file) != 1)
-	{
-	  if (ferror (file))
-	    perror (_("Could not read stats file."));
-	  else
-	    fprintf (stderr, _("Bad stats file size.\n"));
-	}
+                 1, file) != 1)
+        {
+          if (ferror (file))
+            perror (_("cannot read stats file"));
+          else
+            fprintf (stderr, _("bad stats file size\n"));
+        }
       if (fclose (file) != 0)
-	perror (_("Could not read stats file."));
+        perror (_("cannot read stats file"));
     }
   bitset_stats_info_data.runs++;
 }
@@ -283,13 +283,13 @@ bitset_stats_write (const char *file_name)
   if (file)
     {
       if (fwrite (&bitset_stats_info_data, sizeof (bitset_stats_info_data),
-		  1, file) != 1)
-	perror (_("Could not write stats file."));
+                  1, file) != 1)
+        perror (_("cannot write stats file"));
       if (fclose (file) != 0)
-	perror (_("Could not write stats file."));
+        perror (_("cannot write stats file"));
     }
   else
-    perror (_("Could not open stats file for writing."));
+    perror (_("cannot open stats file for writing"));
 }
 
 
@@ -576,11 +576,9 @@ bitset_stats_list (bitset bset, bitset_bindex *list,
   bitset_bindex tmp;
   bitset_bindex size;
   bitset_bindex i;
-  enum bitset_type type;
 
   count = BITSET_LIST_ (bset->s.bset, list, num, next);
 
-  type = BITSET_TYPE_ (bset->s.bset);
   BITSET_STATS_LISTS_INC (bset->s.bset);
 
   /* Log histogram of number of set bits.  */

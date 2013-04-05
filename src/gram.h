@@ -1,24 +1,22 @@
 /* Data definitions for internal representation of Bison's input.
 
-   Copyright (C) 1984, 1986, 1989, 1992, 2001, 2002, 2003, 2004, 2005
-   Free Software Foundation, Inc.
+   Copyright (C) 1984, 1986, 1989, 1992, 2001-2007, 2009-2012 Free
+   Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #ifndef GRAM_H_
 # define GRAM_H_
@@ -115,6 +113,7 @@ extern int ntokens;
 extern int nvars;
 
 typedef int item_number;
+#define ITEM_NUMBER_MAX INT_MAX
 extern item_number *ritem;
 extern unsigned int nritems;
 
@@ -146,6 +145,7 @@ item_number_is_symbol_number (item_number i)
 
 /* Rule numbers.  */
 typedef int rule_number;
+#define RULE_NUMBER_MAX INT_MAX
 extern rule_number nrules;
 
 static inline item_number
@@ -204,20 +204,23 @@ extern rule *rules;
 /* A function that selects a rule.  */
 typedef bool (*rule_filter) (rule *);
 
-/* Return true IFF the rule has a `number' smaller than NRULES.  */
-bool rule_useful_p (rule *r);
+/* Return true IFF the rule has a `number' smaller than NRULES.  That is, it is
+   useful in the grammar.  */
+bool rule_useful_in_grammar_p (rule *r);
 
-/* Return true IFF the rule has a `number' higher than NRULES.  */
-bool rule_useless_p (rule *r);
+/* Return true IFF the rule has a `number' higher than NRULES.  That is, it is
+   useless in the grammar.  */
+bool rule_useless_in_grammar_p (rule *r);
 
-/* Return true IFF the rule is not flagged as useful *and* is useful.
-   In other words, it was discarded because of conflicts.  */
-bool rule_never_reduced_p (rule *r);
+/* Return true IFF the rule is not flagged as useful but is useful in the
+   grammar.  In other words, it was discarded because of conflicts.  */
+bool rule_useless_in_parser_p (rule *r);
 
 /* Print this rule's number and lhs on OUT.  If a PREVIOUS_LHS was
    already displayed (by a previous call for another rule), avoid
    useless repetitions.  */
 void rule_lhs_print (rule *r, symbol *previous_lhs, FILE *out);
+void rule_lhs_print_xml (rule *r, FILE *out, int level);
 
 /* Return the length of the RHS.  */
 int rule_rhs_length (rule *r);
@@ -248,22 +251,23 @@ void ritem_print (FILE *out);
 /* Return the size of the longest rule RHS.  */
 size_t ritem_longest_rhs (void);
 
-/* Print the grammar's rules numbers from BEGIN (inclusive) to END
-   (exclusive) on OUT under TITLE.  */
+/* Print the grammar's rules that match FILTER on OUT under TITLE.  */
 void grammar_rules_partial_print (FILE *out, const char *title,
 				  rule_filter filter);
 
-/* Print the grammar's rules on OUT.  */
+/* Print the grammar's useful rules on OUT.  */
 void grammar_rules_print (FILE *out);
+/* Print all of the grammar's rules with a "usefulness" attribute.  */
+void grammar_rules_print_xml (FILE *out, int level);
 
 /* Dump the grammar. */
 void grammar_dump (FILE *out, const char *title);
 
 /* Report on STDERR the rules that are not flagged USEFUL, using the
-   MESSAGE (which can be `useless rule' when invoked after grammar
-   reduction, or `never reduced' after conflicts were taken into
-   account).  */
-void grammar_rules_never_reduced_report (const char *message);
+   MESSAGE (which can be `rule useless in grammar' when invoked after grammar
+   reduction, or `rule useless in parser due to conflicts' after conflicts
+   were taken into account).  */
+void grammar_rules_useless_report (const char *message);
 
 /* Free the packed grammar. */
 void grammar_free (void);

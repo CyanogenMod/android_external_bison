@@ -1,24 +1,22 @@
-/* Generate the nondeterministic finite state machine for Bison.
+/* Generate the LR(0) parser states for Bison.
 
-   Copyright (C) 1984, 1986, 1989, 2000, 2001, 2002, 2004, 2005 Free
+   Copyright (C) 1984, 1986, 1989, 2000-2002, 2004-2007, 2009-2012 Free
    Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 
 /* See comments in state.h for the data structures that represent it.
@@ -28,7 +26,6 @@
 #include "system.h"
 
 #include <bitset.h>
-#include <quotearg.h>
 
 #include "LR0.h"
 #include "closure.h"
@@ -169,6 +166,10 @@ free_storage (void)
 | shifted.  For each symbol in the grammar, kernel_base[symbol]  |
 | points to a vector of item numbers activated if that symbol is |
 | shifted, and kernel_size[symbol] is their numbers.             |
+|                                                                |
+| itemset is sorted on item index in ritem, which is sorted on   |
+| rule number.  Compute each kernel_base[symbol] with the same   |
+| sort.                                                          |
 `---------------------------------------------------------------*/
 
 static void
@@ -183,8 +184,8 @@ new_itemsets (state *s)
 
   nshifts = 0;
 
-  for (i = 0; i < nritemset; ++i)
-    if (ritem[itemset[i]] >= 0)
+  for (i = 0; i < nitemset; ++i)
+    if (item_number_is_symbol_number (ritem[itemset[i]]))
       {
 	symbol_number sym = item_number_as_symbol_number (ritem[itemset[i]]);
 	if (!kernel_size[sym])
@@ -272,7 +273,7 @@ save_reductions (state *s)
   size_t i;
 
   /* Find and count the active items that represent ends of rules. */
-  for (i = 0; i < nritemset; ++i)
+  for (i = 0; i < nitemset; ++i)
     {
       item_number item = ritem[itemset[i]];
       if (item_number_is_rule_number (item))
@@ -282,7 +283,7 @@ save_reductions (state *s)
 	  if (r == 0)
 	    {
 	      /* This is "reduce 0", i.e., accept. */
-	      assert (!final_state);
+	      aver (!final_state);
 	      final_state = s;
 	    }
 	}
@@ -327,8 +328,8 @@ set_states (void)
 
 
 /*-------------------------------------------------------------------.
-| Compute the nondeterministic finite state machine (see state.h for |
-| details) from the grammar.                                         |
+| Compute the LR(0) parser states (see state.h for details) from the |
+| grammar.                                                           |
 `-------------------------------------------------------------------*/
 
 void
@@ -351,10 +352,8 @@ generate_states (void)
 	fprintf (stderr, "Processing state %d (reached by %s)\n",
 		 s->number,
 		 symbols[s->accessing_symbol]->tag);
-      /* Set up ruleset and itemset for the transitions out of this
-         state.  ruleset gets a 1 bit for each rule that could reduce
-         now.  itemset gets a vector of all the items that could be
-         accepted next.  */
+      /* Set up itemset for the transitions out of this state.  itemset gets a
+         vector of all the items that could be accepted next.  */
       closure (s->items, s->nitems);
       /* Record the reductions allowed out of this state.  */
       save_reductions (s);

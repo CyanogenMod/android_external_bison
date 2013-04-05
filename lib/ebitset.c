@@ -1,10 +1,12 @@
 /* Functions to support expandable bitsets.
-   Copyright (C) 2002, 2003, 2004, 2005, 2006 Free Software Foundation, Inc.
+
+   Copyright (C) 2002-2006, 2009-2012 Free Software Foundation, Inc.
+
    Contributed by Michael Hayes (m.hayes@elec.canterbury.ac.nz).
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation, either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -13,14 +15,12 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
+#include <config.h>
 
 #include "ebitset.h"
+
 #include "obstack.h"
 #include <stdlib.h>
 #include <string.h>
@@ -1335,16 +1335,11 @@ ebitset_bytes (bitset_bindex n_bits ATTRIBUTE_UNUSED)
 bitset
 ebitset_init (bitset bset, bitset_bindex n_bits)
 {
-  bitset_windex size;
-
   bset->b.vtable = &ebitset_vtable;
 
   bset->b.csize = EBITSET_ELT_WORDS;
 
   EBITSET_ZERO_SET (bset);
-
-  size = n_bits ? (n_bits + EBITSET_ELT_BITS - 1) / EBITSET_ELT_BITS
-    : EBITSET_INITIAL_SIZE;
 
   EBITSET_ASIZE (bset) = 0;
   EBITSET_ELTS (bset) = 0;

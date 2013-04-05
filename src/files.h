@@ -1,22 +1,22 @@
 /* File names and variables for bison,
-   Copyright (C) 1984, 1989, 2000, 2001, 2002 Free Software Foundation, Inc.
+
+   Copyright (C) 1984, 1989, 2000-2002, 2006-2007, 2009-2012 Free
+   Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #ifndef FILES_H_
 # define FILES_H_
@@ -27,7 +27,7 @@
 extern char const *spec_outfile;
 
 /* File name for the parser (i.e., the one above, or its default.) */
-extern char const *parser_file_name;
+extern char *parser_file_name;
 
 /* Symbol prefix specified with -p, or 0 if no -p.  */
 extern const char *spec_name_prefix;
@@ -36,21 +36,19 @@ extern const char *spec_name_prefix;
 extern char const *spec_file_prefix;
 
 /* --verbose. */
-extern char const *spec_verbose_file;
+extern char *spec_verbose_file;
 
-/* File name specified for the output VCG graph.  */
-extern char const *spec_graph_file;
+/* File name specified for the output graph.  */
+extern char *spec_graph_file;
+
+/* File name specified for the xml output.  */
+extern char *spec_xml_file;
 
 /* File name specified with --defines.  */
-extern char const *spec_defines_file;
+extern char *spec_defines_file;
 
 /* Directory prefix of output file names.  */
-extern char const *dir_prefix;
-
-
-/* If semantic parser, output a .h file that defines YYSTYPE... */
-extern struct obstack pre_prologue_obstack;
-extern struct obstack post_prologue_obstack;
+extern char *dir_prefix;
 
 /* The file name as given on the command line.
    Not named "input_file" because Flex uses this name for an argument,
@@ -60,7 +58,12 @@ extern uniqstr grammar_file;
 /* The current file name.  Might change with %include, or with #line.  */
 extern uniqstr current_file;
 
+/* The computed base for output file names.  */
+extern char *all_but_ext;
+
 void compute_output_file_names (void);
+void output_file_names_free (void);
+void output_file_name_check (char **file_name);
 
 FILE *xfopen (const char *name, const char *mode);
 void xfclose (FILE *ptr);
