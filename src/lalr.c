@@ -1,28 +1,25 @@
-/* Compute look-ahead criteria for Bison.
+/* Compute lookahead criteria for Bison.
 
-   Copyright (C) 1984, 1986, 1989, 2000, 2001, 2002, 2003, 2004, 2005,
-   2006 Free Software Foundation, Inc.
+   Copyright (C) 1984, 1986, 1989, 2000-2012 Free Software Foundation,
+   Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 
-/* Compute how to make the finite state machine deterministic; find
-   which rules need look-ahead in each state, and which look-ahead
+/* Find which rules need lookahead in each state, and which lookahead
    tokens they accept.  */
 
 #include <config.h>
@@ -30,7 +27,6 @@
 
 #include <bitset.h>
 #include <bitsetv.h>
-#include <quotearg.h>
 
 #include "LR0.h"
 #include "complain.h"
@@ -38,15 +34,17 @@
 #include "getargs.h"
 #include "gram.h"
 #include "lalr.h"
+#include "muscle-tab.h"
 #include "nullable.h"
 #include "reader.h"
 #include "relation.h"
 #include "symtab.h"
 
 goto_number *goto_map;
-static goto_number ngotos;
+goto_number ngotos;
 state_number *from_state;
 state_number *to_state;
+bitsetv goto_follows = NULL;
 
 /* Linked list of goto numbers.  */
 typedef struct goto_list
@@ -56,7 +54,7 @@ typedef struct goto_list
 } goto_list;
 
 
-/* LA is a LR by NTOKENS matrix of bits.  LA[l, i] is 1 if the rule
+/* LA is an NLA by NTOKENS matrix of bits.  LA[l, i] is 1 if the rule
    LArule[l] is applicable in the appropriate state when the next
    token is symbol i.  If LA[l, i] and LA[l, j] are both 1 for i != j,
    it is a conflict.  */
@@ -65,17 +63,13 @@ static bitsetv LA = NULL;
 size_t nLA;
 
 
-/* And for the famous F variable, which name is so descriptive that a
-   comment is hardly needed.  <grin>.  */
-static bitsetv F = NULL;
-
 static goto_number **includes;
 static goto_list **lookback;
 
 
 
 
-static void
+void
 set_goto_map (void)
 {
   state_number s;
@@ -94,7 +88,7 @@ set_goto_map (void)
 	  ngotos++;
 
 	  /* Abort if (ngotos + 1) would overflow.  */
-	  assert (ngotos != GOTO_NUMBER_MAXIMUM);
+	  aver (ngotos != GOTO_NUMBER_MAXIMUM);
 
 	  goto_map[TRANSITION_SYMBOL (sp, i) - ntokens]++;
 	}
@@ -135,12 +129,7 @@ set_goto_map (void)
 }
 
 
-
-/*----------------------------------------------------------.
-| Map a state/symbol pair into its numeric representation.  |
-`----------------------------------------------------------*/
-
-static goto_number
+goto_number
 map_goto (state_number s0, symbol_number sym)
 {
   goto_number high;
@@ -153,7 +142,7 @@ map_goto (state_number s0, symbol_number sym)
 
   for (;;)
     {
-      assert (low <= high);
+      aver (low <= high);
       middle = (low + high) / 2;
       s = from_state[middle];
       if (s == s0)
@@ -175,7 +164,7 @@ initialize_F (void)
 
   goto_number i;
 
-  F = bitsetv_create (ngotos, ntokens, BITSET_FIXED);
+  goto_follows = bitsetv_create (ngotos, ntokens, BITSET_FIXED);
 
   for (i = 0; i < ngotos; i++)
     {
@@ -184,7 +173,7 @@ initialize_F (void)
 
       int j;
       FOR_EACH_SHIFT (sp, j)
-	bitset_set (F[i], TRANSITION_SYMBOL (sp, j));
+	bitset_set (goto_follows[i], TRANSITION_SYMBOL (sp, j));
 
       for (; j < sp->num; j++)
 	{
@@ -204,7 +193,7 @@ initialize_F (void)
 	}
     }
 
-  relation_digraph (reads, ngotos, &F);
+  relation_digraph (reads, ngotos, &goto_follows);
 
   for (i = 0; i < ngotos; i++)
     free (reads[i]);
@@ -219,9 +208,9 @@ add_lookback_edge (state *s, rule *r, goto_number gotono)
 {
   int ri = state_reduction_find (s, r);
   goto_list *sp = xmalloc (sizeof *sp);
-  sp->next = lookback[(s->reductions->look_ahead_tokens - LA) + ri];
+  sp->next = lookback[(s->reductions->lookahead_tokens - LA) + ri];
   sp->value = gotono;
-  lookback[(s->reductions->look_ahead_tokens - LA) + ri] = sp;
+  lookback[(s->reductions->lookahead_tokens - LA) + ri] = sp;
 }
 
 
@@ -264,8 +253,8 @@ build_relations (void)
 	  while (!done)
 	    {
 	      done = true;
-	      /* Each rhs ends in an item number, and there is a
-		 sentinel before the first rhs, so it is safe to
+	      /* Each rhs ends in a rule number, and there is a
+		 sentinel (ritem[-1]=0) before the first rhs, so it is safe to
 		 decrement RP here.  */
 	      rp--;
 	      if (ISVAR (*rp))
@@ -304,7 +293,7 @@ compute_FOLLOWS (void)
 {
   goto_number i;
 
-  relation_digraph (includes, ngotos, &F);
+  relation_digraph (includes, ngotos, &goto_follows);
 
   for (i = 0; i < ngotos; i++)
     free (includes[i]);
@@ -314,128 +303,142 @@ compute_FOLLOWS (void)
 
 
 static void
-compute_look_ahead_tokens (void)
+compute_lookahead_tokens (void)
 {
   size_t i;
   goto_list *sp;
 
   for (i = 0; i < nLA; i++)
     for (sp = lookback[i]; sp; sp = sp->next)
-      bitset_or (LA[i], LA[i], F[sp->value]);
+      bitset_or (LA[i], LA[i], goto_follows[sp->value]);
 
   /* Free LOOKBACK. */
   for (i = 0; i < nLA; i++)
     LIST_FREE (goto_list, lookback[i]);
 
   free (lookback);
-  bitsetv_free (F);
 }
 
 
-/*-----------------------------------------------------.
-| Count the number of look-ahead tokens required for S |
-| (N_LOOK_AHEAD_TOKENS member).                        |
-`-----------------------------------------------------*/
+/*----------------------------------------------------.
+| Count the number of lookahead tokens required for S |
+| (N_LOOKAHEAD_TOKENS member).                        |
+`----------------------------------------------------*/
 
 static int
-state_look_ahead_tokens_count (state *s)
+state_lookahead_tokens_count (state *s, bool default_reduction_only_for_accept)
 {
-  int k;
-  int n_look_ahead_tokens = 0;
+  int n_lookahead_tokens = 0;
   reductions *rp = s->reductions;
   transitions *sp = s->transitions;
 
-  /* We need a look-ahead either to distinguish different
-     reductions (i.e., there are two or more), or to distinguish a
-     reduction from a shift.  Otherwise, it is straightforward,
-     and the state is `consistent'.  */
+  /* Transitions are only disabled during conflict resolution, and that
+     hasn't happened yet, so there should be no need to check that
+     transition 0 hasn't been disabled before checking if it is a shift.
+     However, this check was performed at one time, so we leave it as an
+     aver.  */
+  aver (sp->num == 0 || !TRANSITION_IS_DISABLED (sp, 0));
+
+  /* We need a lookahead either to distinguish different reductions
+     (i.e., there are two or more), or to distinguish a reduction from a
+     shift.  Otherwise, it is straightforward, and the state is
+     `consistent'.  However, do not treat a state with any reductions as
+     consistent unless it is the accepting state (because there is never
+     a lookahead token that makes sense there, and so no lookahead token
+     should be read) if the user has otherwise disabled default
+     reductions.  */
   if (rp->num > 1
-      || (rp->num == 1 && sp->num &&
-	  !TRANSITION_IS_DISABLED (sp, 0) && TRANSITION_IS_SHIFT (sp, 0)))
-    n_look_ahead_tokens += rp->num;
+      || (rp->num == 1 && sp->num && TRANSITION_IS_SHIFT (sp, 0))
+      || (rp->num == 1 && rp->rules[0]->number != 0
+          && default_reduction_only_for_accept))
+    n_lookahead_tokens += rp->num;
   else
     s->consistent = 1;
 
-  for (k = 0; k < sp->num; k++)
-    if (!TRANSITION_IS_DISABLED (sp, k) && TRANSITION_IS_ERROR (sp, k))
-      {
-	s->consistent = 0;
-	break;
-      }
-
-  return n_look_ahead_tokens;
+  return n_lookahead_tokens;
 }
 
 
-/*-----------------------------------------------------.
-| Compute LA, NLA, and the look_ahead_tokens members.  |
-`-----------------------------------------------------*/
+/*----------------------------------------------------.
+| Compute LA, NLA, and the lookahead_tokens members.  |
+`----------------------------------------------------*/
 
-static void
+void
 initialize_LA (void)
 {
   state_number i;
   bitsetv pLA;
+  bool default_reduction_only_for_accept;
+  {
+    char *default_reductions =
+      muscle_percent_define_get ("lr.default-reductions");
+    default_reduction_only_for_accept =
+      0 == strcmp (default_reductions, "accepting");
+    free (default_reductions);
+  }
 
-  /* Compute the total number of reductions requiring a look-ahead.  */
+  /* Compute the total number of reductions requiring a lookahead.  */
   nLA = 0;
   for (i = 0; i < nstates; i++)
-    nLA += state_look_ahead_tokens_count (states[i]);
+    nLA +=
+      state_lookahead_tokens_count (states[i],
+                                    default_reduction_only_for_accept);
   /* Avoid having to special case 0.  */
   if (!nLA)
     nLA = 1;
 
   pLA = LA = bitsetv_create (nLA, ntokens, BITSET_FIXED);
-  lookback = xcalloc (nLA, sizeof *lookback);
 
-  /* Initialize the members LOOK_AHEAD_TOKENS for each state whose reductions
-     require look-ahead tokens.  */
+  /* Initialize the members LOOKAHEAD_TOKENS for each state whose reductions
+     require lookahead tokens.  */
   for (i = 0; i < nstates; i++)
     {
-      int count = state_look_ahead_tokens_count (states[i]);
+      int count =
+        state_lookahead_tokens_count (states[i],
+                                      default_reduction_only_for_accept);
       if (count)
 	{
-	  states[i]->reductions->look_ahead_tokens = pLA;
+	  states[i]->reductions->lookahead_tokens = pLA;
 	  pLA += count;
 	}
     }
 }
 
 
-/*----------------------------------------------.
-| Output the look-ahead tokens for each state.  |
-`----------------------------------------------*/
+/*---------------------------------------------.
+| Output the lookahead tokens for each state.  |
+`---------------------------------------------*/
 
 static void
-look_ahead_tokens_print (FILE *out)
+lookahead_tokens_print (FILE *out)
 {
   state_number i;
   int j, k;
-  fprintf (out, "Look-ahead tokens: BEGIN\n");
+  fprintf (out, "Lookahead tokens: BEGIN\n");
   for (i = 0; i < nstates; ++i)
     {
       reductions *reds = states[i]->reductions;
       bitset_iterator iter;
-      int n_look_ahead_tokens = 0;
+      int n_lookahead_tokens = 0;
 
-      if (reds->look_ahead_tokens)
+      if (reds->lookahead_tokens)
 	for (k = 0; k < reds->num; ++k)
-	  if (reds->look_ahead_tokens[k])
-	    ++n_look_ahead_tokens;
+	  if (reds->lookahead_tokens[k])
+	    ++n_lookahead_tokens;
 
-      fprintf (out, "State %d: %d look-ahead tokens\n",
-	       i, n_look_ahead_tokens);
+      fprintf (out, "State %d: %d lookahead tokens\n",
+	       i, n_lookahead_tokens);
 
-      if (reds->look_ahead_tokens)
+      if (reds->lookahead_tokens)
 	for (j = 0; j < reds->num; ++j)
-	  BITSET_FOR_EACH (iter, reds->look_ahead_tokens[j], k, 0)
+	  BITSET_FOR_EACH (iter, reds->lookahead_tokens[j], k, 0)
 	  {
 	    fprintf (out, "   on %d (%s) -> rule %d\n",
 		     k, symbols[k]->tag,
 		     reds->rules[j]->number);
 	  };
     }
-  fprintf (out, "Look-ahead tokens: END\n");
+  fprintf (out, "Lookahead tokens: END\n");
 }
 
 void
@@ -444,12 +447,47 @@ lalr (void)
   initialize_LA ();
   set_goto_map ();
   initialize_F ();
+  lookback = xcalloc (nLA, sizeof *lookback);
   build_relations ();
   compute_FOLLOWS ();
-  compute_look_ahead_tokens ();
+  compute_lookahead_tokens ();
 
   if (trace_flag & trace_sets)
-    look_ahead_tokens_print (stderr);
+    lookahead_tokens_print (stderr);
+}
+
+
+void
+lalr_update_state_numbers (state_number old_to_new[], state_number nstates_old)
+{
+  goto_number ngotos_reachable = 0;
+  symbol_number nonterminal = 0;
+  aver (nsyms == nvars + ntokens);
+  {
+    goto_number i;
+    for (i = 0; i < ngotos; ++i)
+      {
+        while (i == goto_map[nonterminal])
+          goto_map[nonterminal++] = ngotos_reachable;
+        /* If old_to_new[from_state[i]] = nstates_old, remove this goto
+           entry.  */
+        if (old_to_new[from_state[i]] != nstates_old)
+          {
+            /* from_state[i] is not removed, so it and thus to_state[i] are
+               reachable, so to_state[i] != nstates_old.  */
+            aver (old_to_new[to_state[i]] != nstates_old);
+            from_state[ngotos_reachable] = old_to_new[from_state[i]];
+            to_state[ngotos_reachable] = old_to_new[to_state[i]];
+            ++ngotos_reachable;
+          }
+      }
+  }
+  while (nonterminal <= nvars)
+    {
+      aver (ngotos == goto_map[nonterminal]);
+      goto_map[nonterminal++] = ngotos_reachable;
+    }
+  ngotos = ngotos_reachable;
 }
 
 
@@ -458,6 +496,6 @@ lalr_free (void)
 {
   state_number s;
   for (s = 0; s < nstates; ++s)
-    states[s]->reductions->look_ahead_tokens = NULL;
+    states[s]->reductions->lookahead_tokens = NULL;
   bitsetv_free (LA);
 }

@@ -1,30 +1,27 @@
 /* Output the generated parsing program for Bison.
 
-   Copyright (C) 1984, 1986, 1989, 1992, 2000, 2001, 2002, 2003, 2004,
-   2005 Free Software Foundation, Inc.
+   Copyright (C) 1984, 1986, 1989, 1992, 2000-2006, 2009-2012 Free
+   Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify it
-   under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful, but
-   WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-   General Public License for more details.
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to the Free
-   Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
-   02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
 #include "system.h"
 
 #include <bitsetv.h>
-#include <quotearg.h>
 
 #include "complain.h"
 #include "conflicts.h"
@@ -32,6 +29,7 @@
 #include "getargs.h"
 #include "gram.h"
 #include "lalr.h"
+#include "muscle-tab.h"
 #include "reader.h"
 #include "symtab.h"
 #include "tables.h"
@@ -127,7 +125,7 @@ static int table_size = 32768;
 base_number *table;
 base_number *check;
 /* The value used in TABLE to denote explicit syntax errors
-   (%nonassoc), a negative infinite.  First defaults to ACTION_NUMBER_MININUM,
+   (%nonassoc), a negative infinite.  First defaults to ACTION_NUMBER_MINIMUM,
    but in order to keep small tables, renumbered as TABLE_ERROR, which
    is the smallest (non error) value minus 1.  */
 base_number table_ninf = 0;
@@ -198,18 +196,18 @@ conflict_row (state *s)
 	/* Find all reductions for token J, and record all that do not
 	   match ACTROW[J].  */
 	for (i = 0; i < reds->num; i += 1)
-	  if (bitset_test (reds->look_ahead_tokens[i], j)
+	  if (bitset_test (reds->lookahead_tokens[i], j)
 	      && (actrow[j]
 		  != rule_number_as_item_number (reds->rules[i]->number)))
 	    {
-	      assert (0 < conflict_list_free);
+	      aver (0 < conflict_list_free);
 	      conflict_list[conflict_list_cnt] = reds->rules[i]->number + 1;
 	      conflict_list_cnt += 1;
 	      conflict_list_free -= 1;
 	    }
 
 	/* Leave a 0 at the end.  */
-	assert (0 < conflict_list_free);
+	aver (0 < conflict_list_free);
 	conflict_list[conflict_list_cnt] = 0;
 	conflict_list_cnt += 1;
 	conflict_list_free -= 1;
@@ -219,7 +217,7 @@ conflict_row (state *s)
 
 /*------------------------------------------------------------------.
 | Decide what to do for each type of token if seen as the           |
-| look-ahead in specified state.  The value returned is used as the |
+| lookahead in specified state.  The value returned is used as the  |
 | default action (yydefact) for the state.  In addition, ACTROW is  |
 | filled with what to do for each kind of token, index by symbol    |
 | number, with zero meaning do the default action.  The value       |
@@ -227,7 +225,7 @@ conflict_row (state *s)
 | situation is an error.  The parser recognizes this value	    |
 | specially.							    |
 |                                                                   |
-| This is where conflicts are resolved.  The loop over look-ahead   |
+| This is where conflicts are resolved.  The loop over lookahead    |
 | rules considered lower-numbered rules last, and the last rule     |
 | considered that likes a token gets to handle it.                  |
 |                                                                   |
@@ -241,7 +239,7 @@ static rule *
 action_row (state *s)
 {
   int i;
-  rule *default_rule = NULL;
+  rule *default_reduction = NULL;
   reductions *reds = s->reductions;
   transitions *trans = s->transitions;
   errs *errp = s->errs;
@@ -252,17 +250,17 @@ action_row (state *s)
   for (i = 0; i < ntokens; i++)
     actrow[i] = conflrow[i] = 0;
 
-  if (reds->look_ahead_tokens)
+  if (reds->lookahead_tokens)
     {
       int j;
       bitset_iterator biter;
       /* loop over all the rules available here which require
-	 look-ahead (in reverse order to give precedence to the first
+	 lookahead (in reverse order to give precedence to the first
 	 rule) */
       for (i = reds->num - 1; i >= 0; --i)
 	/* and find each token which the rule finds acceptable
 	   to come next */
-	BITSET_FOR_EACH (biter, reds->look_ahead_tokens[i], j, 0)
+	BITSET_FOR_EACH (biter, reds->lookahead_tokens[i], j, 0)
 	{
 	  /* and record this rule as the rule to use if that
 	     token follows.  */
@@ -305,13 +303,24 @@ action_row (state *s)
       actrow[sym->number] = ACTION_NUMBER_MINIMUM;
     }
 
+  /* Turn off default reductions where requested by the user.  See
+     state_lookahead_tokens_count in lalr.c to understand when states are
+     labeled as consistent.  */
+  {
+    char *default_reductions =
+      muscle_percent_define_get ("lr.default-reductions");
+    if (0 != strcmp (default_reductions, "most") && !s->consistent)
+      nodefault = true;
+    free (default_reductions);
+  }
+
   /* Now find the most common reduction and make it the default action
      for this state.  */
 
   if (reds->num >= 1 && !nodefault)
     {
       if (s->consistent)
-	default_rule = reds->rules[0];
+	default_reduction = reds->rules[0];
       else
 	{
 	  int max = 0;
@@ -328,7 +337,7 @@ action_row (state *s)
 	      if (count > max)
 		{
 		  max = count;
-		  default_rule = r;
+		  default_reduction = r;
 		}
 	    }
 
@@ -342,17 +351,18 @@ action_row (state *s)
 	    {
 	      int j;
 	      for (j = 0; j < ntokens; j++)
-		if (actrow[j] == rule_number_as_item_number (default_rule->number)
+		if (actrow[j]
+                    == rule_number_as_item_number (default_reduction->number)
 		    && ! (nondeterministic_parser && conflrow[j]))
 		  actrow[j] = 0;
 	    }
 	}
     }
 
-  /* If have no default rule, the default is an error.
+  /* If have no default reduction, the default is an error.
      So replace any action which says "error" with "use default".  */
 
-  if (!default_rule)
+  if (!default_reduction)
     for (i = 0; i < ntokens; i++)
       if (actrow[i] == ACTION_NUMBER_MINIMUM)
 	actrow[i] = 0;
@@ -360,7 +370,7 @@ action_row (state *s)
   if (conflicted)
     conflict_row (s);
 
-  return default_rule;
+  return default_reduction;
 }
 
 
@@ -410,7 +420,7 @@ save_row (state_number s)
 
 /*------------------------------------------------------------------.
 | Figure out the actions for the specified state, indexed by        |
-| look-ahead token type.                                            |
+| lookahead token type.                                             |
 |                                                                   |
 | The YYDEFACT table is output now.  The detailed info is saved for |
 | putting into YYTABLE later.                                       |
@@ -441,8 +451,8 @@ token_actions (void)
 
   for (i = 0; i < nstates; ++i)
     {
-      rule *default_rule = action_row (states[i]);
-      yydefact[i] = default_rule ? default_rule->number + 1 : 0;
+      rule *default_reduction = action_row (states[i]);
+      yydefact[i] = default_reduction ? default_reduction->number + 1 : 0;
       save_row (i);
 
       /* Now that the parser was computed, we can find which rules are
@@ -673,14 +683,14 @@ pack_vector (vector_number vector)
   base_number *to = tos[i];
   unsigned int *conflict_to = conflict_tos[i];
 
-  assert (t);
+  aver (t != 0);
 
   for (j = lowzero - from[0]; ; j++)
     {
       int k;
       bool ok = true;
 
-      assert (j < table_size);
+      aver (j < table_size);
 
       for (k = 0; ok && k < t; k++)
 	{
@@ -713,7 +723,7 @@ pack_vector (vector_number vector)
 	  if (loc > high)
 	    high = loc;
 
-	  assert (BASE_MINIMUM <= j && j <= BASE_MAXIMUM);
+	  aver (BASE_MINIMUM <= j && j <= BASE_MAXIMUM);
 	  return j;
 	}
     }

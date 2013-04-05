@@ -1,14 +1,13 @@
 /* hash - hashing table processing.
 
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004 Free
-   Software Foundation, Inc.
+   Copyright (C) 1998-2004, 2006-2007, 2009-2012 Free Software Foundation, Inc.
 
    Written by Jim Meyering, 1992.
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation; either version 3 of the License, or
+   (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -16,22 +15,21 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 /* A generic hash table package.  */
 
 /* Define USE_OBSTACK to 1 if you want the allocator to use obstacks instead
    of malloc.  If you change USE_OBSTACK, you have to recompile!  */
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
+#include <config.h>
 
 #include "hash.h"
-#include "xalloc.h"
 
-#include <limits.h>
+#include "bitrotate.h"
+#include "xalloc-oversized.h"
+
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -45,9 +43,11 @@
 # endif
 #endif
 
-#ifndef SIZE_MAX
-# define SIZE_MAX ((size_t) -1)
-#endif
+struct hash_entry
+  {
+    void *data;
+    struct hash_entry *next;
+  };
 
 struct hash_table
   {
@@ -60,10 +60,10 @@ struct hash_table
     size_t n_buckets_used;
     size_t n_entries;
 
-    /* Tuning arguments, kept in a physicaly separate structure.  */
+    /* Tuning arguments, kept in a physically separate structure.  */
     const Hash_tuning *tuning;
 
-    /* Three functions are given to `hash_initialize', see the documentation
+    /* Three functions are given to 'hash_initialize', see the documentation
        block for this function.  In a word, HASHER randomizes a user entry
        into a number up from 0 up to some maximum minus 1; COMPARATOR returns
        true if two user entries compare equally; and DATA_FREER is the cleanup
@@ -84,26 +84,26 @@ struct hash_table
   };
 
 /* A hash table contains many internal entries, each holding a pointer to
-   some user provided data (also called a user entry).  An entry indistinctly
+   some user-provided data (also called a user entry).  An entry indistinctly
    refers to both the internal entry and its associated user entry.  A user
    entry contents may be hashed by a randomization function (the hashing
-   function, or just `hasher' for short) into a number (or `slot') between 0
+   function, or just "hasher" for short) into a number (or "slot") between 0
    and the current table size.  At each slot position in the hash table,
    starts a linked chain of entries for which the user data all hash to this
    slot.  A bucket is the collection of all entries hashing to the same slot.
 
-   A good `hasher' function will distribute entries rather evenly in buckets.
+   A good "hasher" function will distribute entries rather evenly in buckets.
    In the ideal case, the length of each bucket is roughly the number of
    entries divided by the table size.  Finding the slot for a data is usually
-   done in constant time by the `hasher', and the later finding of a precise
+   done in constant time by the "hasher", and the later finding of a precise
    entry is linear in time with the size of the bucket.  Consequently, a
    larger hash table size (that is, a larger number of buckets) is prone to
-   yielding shorter chains, *given* the `hasher' function behaves properly.
+   yielding shorter chains, *given* the "hasher" function behaves properly.
 
    Long buckets slow down the lookup algorithm.  One might use big hash table
    sizes in hope to reduce the average length of buckets, but this might
    become inordinate, as unused slots in the hash table take some space.  The
-   best bet is to make sure you are using a good `hasher' function (beware
+   best bet is to make sure you are using a good "hasher" function (beware
    that those are not that easy to write! :-), and to use a table size
    larger than the actual number of entries.  */
 
@@ -113,8 +113,8 @@ struct hash_table
    1.0).  The growth threshold defaults to 0.8, and the growth factor
    defaults to 1.414, meaning that the table will have doubled its size
    every second time 80% of the buckets get used.  */
-#define DEFAULT_GROWTH_THRESHOLD 0.8
-#define DEFAULT_GROWTH_FACTOR 1.414
+#define DEFAULT_GROWTH_THRESHOLD 0.8f
+#define DEFAULT_GROWTH_FACTOR 1.414f
 
 /* If a deletion empties a bucket and causes the ratio of used buckets to
    table size to become smaller than the shrink threshold (a number between
@@ -122,8 +122,8 @@ struct hash_table
    number greater than the shrink threshold but smaller than 1.0).  The shrink
    threshold and factor default to 0.0 and 1.0, meaning that the table never
    shrinks.  */
-#define DEFAULT_SHRINK_THRESHOLD 0.0
-#define DEFAULT_SHRINK_FACTOR 1.0
+#define DEFAULT_SHRINK_THRESHOLD 0.0f
+#define DEFAULT_SHRINK_FACTOR 1.0f
 
 /* Use this to initialize or reset a TUNING structure to
    some sensible values. */
@@ -179,16 +179,16 @@ hash_get_max_bucket_length (const Hash_table *table)
   for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
     {
       if (bucket->data)
-	{
-	  struct hash_entry const *cursor = bucket;
-	  size_t bucket_length = 1;
+        {
+          struct hash_entry const *cursor = bucket;
+          size_t bucket_length = 1;
 
-	  while (cursor = cursor->next, cursor)
-	    bucket_length++;
+          while (cursor = cursor->next, cursor)
+            bucket_length++;
 
-	  if (bucket_length > max_bucket_length)
-	    max_bucket_length = bucket_length;
-	}
+          if (bucket_length > max_bucket_length)
+            max_bucket_length = bucket_length;
+        }
     }
 
   return max_bucket_length;
@@ -207,17 +207,17 @@ hash_table_ok (const Hash_table *table)
   for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
     {
       if (bucket->data)
-	{
-	  struct hash_entry const *cursor = bucket;
+        {
+          struct hash_entry const *cursor = bucket;
 
-	  /* Count bucket head.  */
-	  n_buckets_used++;
-	  n_entries++;
+          /* Count bucket head.  */
+          n_buckets_used++;
+          n_entries++;
 
-	  /* Count bucket overflow.  */
-	  while (cursor = cursor->next, cursor)
-	    n_entries++;
-	}
+          /* Count bucket overflow.  */
+          while (cursor = cursor->next, cursor)
+            n_entries++;
+        }
     }
 
   if (n_buckets_used == table->n_buckets_used && n_entries == table->n_entries)
@@ -237,10 +237,21 @@ hash_print_statistics (const Hash_table *table, FILE *stream)
   fprintf (stream, "# entries:         %lu\n", (unsigned long int) n_entries);
   fprintf (stream, "# buckets:         %lu\n", (unsigned long int) n_buckets);
   fprintf (stream, "# buckets used:    %lu (%.2f%%)\n",
-	   (unsigned long int) n_buckets_used,
-	   (100.0 * n_buckets_used) / n_buckets);
+           (unsigned long int) n_buckets_used,
+           (100.0 * n_buckets_used) / n_buckets);
   fprintf (stream, "max bucket length: %lu\n",
-	   (unsigned long int) max_bucket_length);
+           (unsigned long int) max_bucket_length);
+}
+
+/* Hash KEY and return a pointer to the selected bucket.
+   If TABLE->hasher misbehaves, abort.  */
+static struct hash_entry *
+safe_hasher (const Hash_table *table, const void *key)
+{
+  size_t n = table->hasher (key, table->n_buckets);
+  if (! (n < table->n_buckets))
+    abort ();
+  return table->bucket + n;
 }
 
 /* If ENTRY matches an entry already in the hash table, return the
@@ -249,18 +260,14 @@ hash_print_statistics (const Hash_table *table, FILE *stream)
 void *
 hash_lookup (const Hash_table *table, const void *entry)
 {
-  struct hash_entry const *bucket
-    = table->bucket + table->hasher (entry, table->n_buckets);
+  struct hash_entry const *bucket = safe_hasher (table, entry);
   struct hash_entry const *cursor;
-
-  if (! (bucket < table->bucket_limit))
-    abort ();
 
   if (bucket->data == NULL)
     return NULL;
 
   for (cursor = bucket; cursor; cursor = cursor->next)
-    if (table->comparator (entry, cursor->data))
+    if (entry == cursor->data || table->comparator (entry, cursor->data))
       return cursor->data;
 
   return NULL;
@@ -271,7 +278,9 @@ hash_lookup (const Hash_table *table, const void *entry)
 /* The functions in this page traverse the hash table and process the
    contained entries.  For the traversal to work properly, the hash table
    should not be resized nor modified while any particular entry is being
-   processed.  In particular, entries should not be added or removed.  */
+   processed.  In particular, entries should not be added, and an entry
+   may be removed only if there is no shrink threshold and the entry being
+   removed has already been passed to hash_get_next.  */
 
 /* Return the first data in the table, or NULL if the table is empty.  */
 
@@ -291,23 +300,24 @@ hash_get_first (const Hash_table *table)
 }
 
 /* Return the user data for the entry following ENTRY, where ENTRY has been
-   returned by a previous call to either `hash_get_first' or `hash_get_next'.
+   returned by a previous call to either 'hash_get_first' or 'hash_get_next'.
    Return NULL if there are no more entries.  */
 
 void *
 hash_get_next (const Hash_table *table, const void *entry)
 {
-  struct hash_entry const *bucket
-    = table->bucket + table->hasher (entry, table->n_buckets);
+  struct hash_entry const *bucket = safe_hasher (table, entry);
   struct hash_entry const *cursor;
 
-  if (! (bucket < table->bucket_limit))
-    abort ();
-
   /* Find next entry in the same bucket.  */
-  for (cursor = bucket; cursor; cursor = cursor->next)
-    if (cursor->data == entry && cursor->next)
-      return cursor->next->data;
+  cursor = bucket;
+  do
+    {
+      if (cursor->data == entry && cursor->next)
+        return cursor->next->data;
+      cursor = cursor->next;
+    }
+  while (cursor != NULL);
 
   /* Find first entry in any subsequent bucket.  */
   while (++bucket < table->bucket_limit)
@@ -324,7 +334,7 @@ hash_get_next (const Hash_table *table, const void *entry)
 
 size_t
 hash_get_entries (const Hash_table *table, void **buffer,
-		  size_t buffer_size)
+                  size_t buffer_size)
 {
   size_t counter = 0;
   struct hash_entry const *bucket;
@@ -333,14 +343,14 @@ hash_get_entries (const Hash_table *table, void **buffer,
   for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
     {
       if (bucket->data)
-	{
-	  for (cursor = bucket; cursor; cursor = cursor->next)
-	    {
-	      if (counter >= buffer_size)
-		return counter;
-	      buffer[counter++] = cursor->data;
-	    }
-	}
+        {
+          for (cursor = bucket; cursor; cursor = cursor->next)
+            {
+              if (counter >= buffer_size)
+                return counter;
+              buffer[counter++] = cursor->data;
+            }
+        }
     }
 
   return counter;
@@ -356,7 +366,7 @@ hash_get_entries (const Hash_table *table, void **buffer,
 
 size_t
 hash_do_for_each (const Hash_table *table, Hash_processor processor,
-		  void *processor_data)
+                  void *processor_data)
 {
   size_t counter = 0;
   struct hash_entry const *bucket;
@@ -365,14 +375,14 @@ hash_do_for_each (const Hash_table *table, Hash_processor processor,
   for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
     {
       if (bucket->data)
-	{
-	  for (cursor = bucket; cursor; cursor = cursor->next)
-	    {
-	      if (!(*processor) (cursor->data, processor_data))
-		return counter;
-	      counter++;
-	    }
-	}
+        {
+          for (cursor = bucket; cursor; cursor = cursor->next)
+            {
+              if (! processor (cursor->data, processor_data))
+                return counter;
+              counter++;
+            }
+        }
     }
 
   return counter;
@@ -394,10 +404,8 @@ hash_do_for_each (const Hash_table *table, Hash_processor processor,
 size_t
 hash_string (const char *string, size_t n_buckets)
 {
-# define ROTATE_LEFT(Value, Shift) \
-  ((Value) << (Shift) | (Value) >> ((sizeof (size_t) * CHAR_BIT) - (Shift)))
 # define HASH_ONE_CHAR(Value, Byte) \
-  ((Byte) + ROTATE_LEFT (Value, 7))
+  ((Byte) + rotl_sz (Value, 7))
 
   size_t value = 0;
   unsigned char ch;
@@ -406,15 +414,14 @@ hash_string (const char *string, size_t n_buckets)
     value = HASH_ONE_CHAR (value, ch);
   return value % n_buckets;
 
-# undef ROTATE_LEFT
 # undef HASH_ONE_CHAR
 }
 
 #else /* not USE_DIFF_HASH */
 
-/* This one comes from `recode', and performs a bit better than the above as
+/* This one comes from 'recode', and performs a bit better than the above as
    per a few experiments.  It is inspired from a hashing routine found in the
-   very old Cyber `snoop', itself written in typical Greg Mansfield style.
+   very old Cyber 'snoop', itself written in typical Greg Mansfield style.
    (By the way, what happened to this excellent man?  Is he still alive?)  */
 
 size_t
@@ -433,7 +440,7 @@ hash_string (const char *string, size_t n_buckets)
 /* Return true if CANDIDATE is a prime number.  CANDIDATE should be an odd
    number at least equal to 11.  */
 
-static bool
+static bool _GL_ATTRIBUTE_CONST
 is_prime (size_t candidate)
 {
   size_t divisor = 3;
@@ -452,7 +459,7 @@ is_prime (size_t candidate)
 /* Round a given CANDIDATE number up to the nearest prime, and return that
    prime.  Primes lower than 10 are merely skipped.  */
 
-static size_t
+static size_t _GL_ATTRIBUTE_CONST
 next_prime (size_t candidate)
 {
   /* Skip small primes.  */
@@ -462,7 +469,7 @@ next_prime (size_t candidate)
   /* Make it definitely odd.  */
   candidate |= 1;
 
-  while (!is_prime (candidate))
+  while (SIZE_MAX != candidate && !is_prime (candidate))
     candidate += 2;
 
   return candidate;
@@ -474,6 +481,27 @@ hash_reset_tuning (Hash_tuning *tuning)
   *tuning = default_tuning;
 }
 
+/* If the user passes a NULL hasher, we hash the raw pointer.  */
+static size_t
+raw_hasher (const void *data, size_t n)
+{
+  /* When hashing unique pointers, it is often the case that they were
+     generated by malloc and thus have the property that the low-order
+     bits are 0.  As this tends to give poorer performance with small
+     tables, we rotate the pointer value before performing division,
+     in an attempt to improve hash quality.  */
+  size_t val = rotr_sz ((size_t) data, 3);
+  return val % n;
+}
+
+/* If the user passes a NULL comparator, we use pointer comparison.  */
+static bool
+raw_comparator (const void *a, const void *b)
+{
+  return a == b;
+}
+
+
 /* For the given hash TABLE, check the user supplied tuning structure for
    reasonable values, and return true if there is no gross error with it.
    Otherwise, definitively reset the TUNING field to some acceptable default
@@ -484,13 +512,16 @@ static bool
 check_tuning (Hash_table *table)
 {
   const Hash_tuning *tuning = table->tuning;
+  float epsilon;
+  if (tuning == &default_tuning)
+    return true;
 
   /* Be a bit stricter than mathematics would require, so that
      rounding errors in size calculations do not cause allocations to
      fail to grow or shrink as they should.  The smallest allocation
      is 11 (due to next_prime's algorithm), so an epsilon of 0.1
      should be good enough.  */
-  float epsilon = 0.1f;
+  epsilon = 0.1f;
 
   if (epsilon < tuning->growth_threshold
       && tuning->growth_threshold < 1 - epsilon
@@ -505,6 +536,26 @@ check_tuning (Hash_table *table)
   return false;
 }
 
+/* Compute the size of the bucket array for the given CANDIDATE and
+   TUNING, or return 0 if there is no possible way to allocate that
+   many entries.  */
+
+static size_t _GL_ATTRIBUTE_PURE
+compute_bucket_size (size_t candidate, const Hash_tuning *tuning)
+{
+  if (!tuning->is_n_buckets)
+    {
+      float new_candidate = candidate / tuning->growth_threshold;
+      if (SIZE_MAX <= new_candidate)
+        return 0;
+      candidate = new_candidate;
+    }
+  candidate = next_prime (candidate);
+  if (xalloc_oversized (candidate, sizeof (struct hash_entry *)))
+    return 0;
+  return candidate;
+}
+
 /* Allocate and return a new hash table, or NULL upon failure.  The initial
    number of buckets is automatically selected so as to _guarantee_ that you
    may insert at least CANDIDATE different user entries before any growth of
@@ -516,35 +567,40 @@ check_tuning (Hash_table *table)
 
    TUNING points to a structure of user-supplied values, in case some fine
    tuning is wanted over the default behavior of the hasher.  If TUNING is
-   NULL, the default tuning parameters are used instead.
+   NULL, the default tuning parameters are used instead.  If TUNING is
+   provided but the values requested are out of bounds or might cause
+   rounding errors, return NULL.
 
-   The user-supplied HASHER function should be provided.  It accepts two
+   The user-supplied HASHER function, when not NULL, accepts two
    arguments ENTRY and TABLE_SIZE.  It computes, by hashing ENTRY contents, a
    slot number for that entry which should be in the range 0..TABLE_SIZE-1.
    This slot number is then returned.
 
-   The user-supplied COMPARATOR function should be provided.  It accepts two
+   The user-supplied COMPARATOR function, when not NULL, accepts two
    arguments pointing to user data, it then returns true for a pair of entries
    that compare equal, or false otherwise.  This function is internally called
-   on entries which are already known to hash to the same bucket index.
+   on entries which are already known to hash to the same bucket index,
+   but which are distinct pointers.
 
    The user-supplied DATA_FREER function, when not NULL, may be later called
    with the user data as an argument, just before the entry containing the
-   data gets freed.  This happens from within `hash_free' or `hash_clear'.
+   data gets freed.  This happens from within 'hash_free' or 'hash_clear'.
    You should specify this function only if you want these functions to free
-   all of your `data' data.  This is typically the case when your data is
+   all of your 'data' data.  This is typically the case when your data is
    simply an auxiliary struct that you have malloc'd to aggregate several
    values.  */
 
 Hash_table *
 hash_initialize (size_t candidate, const Hash_tuning *tuning,
-		 Hash_hasher hasher, Hash_comparator comparator,
-		 Hash_data_freer data_freer)
+                 Hash_hasher hasher, Hash_comparator comparator,
+                 Hash_data_freer data_freer)
 {
   Hash_table *table;
 
-  if (hasher == NULL || comparator == NULL)
-    return NULL;
+  if (hasher == NULL)
+    hasher = raw_hasher;
+  if (comparator == NULL)
+    comparator = raw_comparator;
 
   table = malloc (sizeof *table);
   if (table == NULL)
@@ -556,28 +612,20 @@ hash_initialize (size_t candidate, const Hash_tuning *tuning,
   if (!check_tuning (table))
     {
       /* Fail if the tuning options are invalid.  This is the only occasion
-	 when the user gets some feedback about it.  Once the table is created,
-	 if the user provides invalid tuning options, we silently revert to
-	 using the defaults, and ignore further request to change the tuning
-	 options.  */
+         when the user gets some feedback about it.  Once the table is created,
+         if the user provides invalid tuning options, we silently revert to
+         using the defaults, and ignore further request to change the tuning
+         options.  */
       goto fail;
     }
 
-  if (!tuning->is_n_buckets)
-    {
-      float new_candidate = candidate / tuning->growth_threshold;
-      if (SIZE_MAX <= new_candidate)
-	goto fail;
-      candidate = new_candidate;
-    }
-
-  if (xalloc_oversized (candidate, sizeof *table->bucket))
-    goto fail;
-  table->n_buckets = next_prime (candidate);
-  if (xalloc_oversized (table->n_buckets, sizeof *table->bucket))
+  table->n_buckets = compute_bucket_size (candidate, tuning);
+  if (!table->n_buckets)
     goto fail;
 
   table->bucket = calloc (table->n_buckets, sizeof *table->bucket);
+  if (table->bucket == NULL)
+    goto fail;
   table->bucket_limit = table->bucket + table->n_buckets;
   table->n_buckets_used = 0;
   table->n_entries = 0;
@@ -609,30 +657,30 @@ hash_clear (Hash_table *table)
   for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
     {
       if (bucket->data)
-	{
-	  struct hash_entry *cursor;
-	  struct hash_entry *next;
+        {
+          struct hash_entry *cursor;
+          struct hash_entry *next;
 
-	  /* Free the bucket overflow.  */
-	  for (cursor = bucket->next; cursor; cursor = next)
-	    {
-	      if (table->data_freer)
-		(*table->data_freer) (cursor->data);
-	      cursor->data = NULL;
+          /* Free the bucket overflow.  */
+          for (cursor = bucket->next; cursor; cursor = next)
+            {
+              if (table->data_freer)
+                table->data_freer (cursor->data);
+              cursor->data = NULL;
 
-	      next = cursor->next;
-	      /* Relinking is done one entry at a time, as it is to be expected
-		 that overflows are either rare or short.  */
-	      cursor->next = table->free_entry_list;
-	      table->free_entry_list = cursor;
-	    }
+              next = cursor->next;
+              /* Relinking is done one entry at a time, as it is to be expected
+                 that overflows are either rare or short.  */
+              cursor->next = table->free_entry_list;
+              table->free_entry_list = cursor;
+            }
 
-	  /* Free the bucket head.  */
-	  if (table->data_freer)
-	    (*table->data_freer) (bucket->data);
-	  bucket->data = NULL;
-	  bucket->next = NULL;
-	}
+          /* Free the bucket head.  */
+          if (table->data_freer)
+            table->data_freer (bucket->data);
+          bucket->data = NULL;
+          bucket->next = NULL;
+        }
     }
 
   table->n_buckets_used = 0;
@@ -655,15 +703,13 @@ hash_free (Hash_table *table)
   if (table->data_freer && table->n_entries)
     {
       for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
-	{
-	  if (bucket->data)
-	    {
-	      for (cursor = bucket; cursor; cursor = cursor->next)
-		{
-		  (*table->data_freer) (cursor->data);
-		}
-	    }
-	}
+        {
+          if (bucket->data)
+            {
+              for (cursor = bucket; cursor; cursor = cursor->next)
+                table->data_freer (cursor->data);
+            }
+        }
     }
 
 #if USE_OBSTACK
@@ -676,10 +722,10 @@ hash_free (Hash_table *table)
   for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
     {
       for (cursor = bucket->next; cursor; cursor = next)
-	{
-	  next = cursor->next;
-	  free (cursor);
-	}
+        {
+          next = cursor->next;
+          free (cursor);
+        }
     }
 
   /* Also reclaim the internal list of previously freed entries.  */
@@ -698,7 +744,7 @@ hash_free (Hash_table *table)
 
 /* Insertion and deletion.  */
 
-/* Get a new hash entry for a bucket overflow, possibly by reclying a
+/* Get a new hash entry for a bucket overflow, possibly by recycling a
    previously freed one.  If this is not possible, allocate a new one.  */
 
 static struct hash_entry *
@@ -742,14 +788,10 @@ free_entry (Hash_table *table, struct hash_entry *entry)
 
 static void *
 hash_find_entry (Hash_table *table, const void *entry,
-		 struct hash_entry **bucket_head, bool delete)
+                 struct hash_entry **bucket_head, bool delete)
 {
-  struct hash_entry *bucket
-    = table->bucket + table->hasher (entry, table->n_buckets);
+  struct hash_entry *bucket = safe_hasher (table, entry);
   struct hash_entry *cursor;
-
-  if (! (bucket < table->bucket_limit))
-    abort ();
 
   *bucket_head = bucket;
 
@@ -758,26 +800,26 @@ hash_find_entry (Hash_table *table, const void *entry,
     return NULL;
 
   /* See if the entry is the first in the bucket.  */
-  if ((*table->comparator) (entry, bucket->data))
+  if (entry == bucket->data || table->comparator (entry, bucket->data))
     {
       void *data = bucket->data;
 
       if (delete)
-	{
-	  if (bucket->next)
-	    {
-	      struct hash_entry *next = bucket->next;
+        {
+          if (bucket->next)
+            {
+              struct hash_entry *next = bucket->next;
 
-	      /* Bump the first overflow entry into the bucket head, then save
-		 the previous first overflow entry for later recycling.  */
-	      *bucket = *next;
-	      free_entry (table, next);
-	    }
-	  else
-	    {
-	      bucket->data = NULL;
-	    }
-	}
+              /* Bump the first overflow entry into the bucket head, then save
+                 the previous first overflow entry for later recycling.  */
+              *bucket = *next;
+              free_entry (table, next);
+            }
+          else
+            {
+              bucket->data = NULL;
+            }
+        }
 
       return data;
     }
@@ -785,26 +827,108 @@ hash_find_entry (Hash_table *table, const void *entry,
   /* Scan the bucket overflow.  */
   for (cursor = bucket; cursor->next; cursor = cursor->next)
     {
-      if ((*table->comparator) (entry, cursor->next->data))
-	{
-	  void *data = cursor->next->data;
+      if (entry == cursor->next->data
+          || table->comparator (entry, cursor->next->data))
+        {
+          void *data = cursor->next->data;
 
-	  if (delete)
-	    {
-	      struct hash_entry *next = cursor->next;
+          if (delete)
+            {
+              struct hash_entry *next = cursor->next;
 
-	      /* Unlink the entry to delete, then save the freed entry for later
-		 recycling.  */
-	      cursor->next = next->next;
-	      free_entry (table, next);
-	    }
+              /* Unlink the entry to delete, then save the freed entry for later
+                 recycling.  */
+              cursor->next = next->next;
+              free_entry (table, next);
+            }
 
-	  return data;
-	}
+          return data;
+        }
     }
 
   /* No entry found.  */
   return NULL;
+}
+
+/* Internal helper, to move entries from SRC to DST.  Both tables must
+   share the same free entry list.  If SAFE, only move overflow
+   entries, saving bucket heads for later, so that no allocations will
+   occur.  Return false if the free entry list is exhausted and an
+   allocation fails.  */
+
+static bool
+transfer_entries (Hash_table *dst, Hash_table *src, bool safe)
+{
+  struct hash_entry *bucket;
+  struct hash_entry *cursor;
+  struct hash_entry *next;
+  for (bucket = src->bucket; bucket < src->bucket_limit; bucket++)
+    if (bucket->data)
+      {
+        void *data;
+        struct hash_entry *new_bucket;
+
+        /* Within each bucket, transfer overflow entries first and
+           then the bucket head, to minimize memory pressure.  After
+           all, the only time we might allocate is when moving the
+           bucket head, but moving overflow entries first may create
+           free entries that can be recycled by the time we finally
+           get to the bucket head.  */
+        for (cursor = bucket->next; cursor; cursor = next)
+          {
+            data = cursor->data;
+            new_bucket = safe_hasher (dst, data);
+
+            next = cursor->next;
+
+            if (new_bucket->data)
+              {
+                /* Merely relink an existing entry, when moving from a
+                   bucket overflow into a bucket overflow.  */
+                cursor->next = new_bucket->next;
+                new_bucket->next = cursor;
+              }
+            else
+              {
+                /* Free an existing entry, when moving from a bucket
+                   overflow into a bucket header.  */
+                new_bucket->data = data;
+                dst->n_buckets_used++;
+                free_entry (dst, cursor);
+              }
+          }
+        /* Now move the bucket head.  Be sure that if we fail due to
+           allocation failure that the src table is in a consistent
+           state.  */
+        data = bucket->data;
+        bucket->next = NULL;
+        if (safe)
+          continue;
+        new_bucket = safe_hasher (dst, data);
+
+        if (new_bucket->data)
+          {
+            /* Allocate or recycle an entry, when moving from a bucket
+               header into a bucket overflow.  */
+            struct hash_entry *new_entry = allocate_entry (dst);
+
+            if (new_entry == NULL)
+              return false;
+
+            new_entry->data = data;
+            new_entry->next = new_bucket->next;
+            new_bucket->next = new_entry;
+          }
+        else
+          {
+            /* Move from one bucket header to another.  */
+            new_bucket->data = data;
+            dst->n_buckets_used++;
+          }
+        bucket->data = NULL;
+        src->n_buckets_used--;
+      }
+  return true;
 }
 
 /* For an already existing hash table, change the number of buckets through
@@ -813,134 +937,123 @@ hash_find_entry (Hash_table *table, const void *entry,
    the table may receive at least CANDIDATE different user entries, including
    those already in the table, before any other growth of the hash table size
    occurs.  If TUNING->IS_N_BUCKETS is true, then CANDIDATE specifies the
-   exact number of buckets desired.  */
+   exact number of buckets desired.  Return true iff the rehash succeeded.  */
 
 bool
 hash_rehash (Hash_table *table, size_t candidate)
 {
+  Hash_table storage;
   Hash_table *new_table;
-  struct hash_entry *bucket;
-  struct hash_entry *cursor;
-  struct hash_entry *next;
+  size_t new_size = compute_bucket_size (candidate, table->tuning);
 
-  new_table = hash_initialize (candidate, table->tuning, table->hasher,
-			       table->comparator, table->data_freer);
-  if (new_table == NULL)
+  if (!new_size)
     return false;
+  if (new_size == table->n_buckets)
+    return true;
+  new_table = &storage;
+  new_table->bucket = calloc (new_size, sizeof *new_table->bucket);
+  if (new_table->bucket == NULL)
+    return false;
+  new_table->n_buckets = new_size;
+  new_table->bucket_limit = new_table->bucket + new_size;
+  new_table->n_buckets_used = 0;
+  new_table->n_entries = 0;
+  new_table->tuning = table->tuning;
+  new_table->hasher = table->hasher;
+  new_table->comparator = table->comparator;
+  new_table->data_freer = table->data_freer;
+
+  /* In order for the transfer to successfully complete, we need
+     additional overflow entries when distinct buckets in the old
+     table collide into a common bucket in the new table.  The worst
+     case possible is a hasher that gives a good spread with the old
+     size, but returns a constant with the new size; if we were to
+     guarantee table->n_buckets_used-1 free entries in advance, then
+     the transfer would be guaranteed to not allocate memory.
+     However, for large tables, a guarantee of no further allocation
+     introduces a lot of extra memory pressure, all for an unlikely
+     corner case (most rehashes reduce, rather than increase, the
+     number of overflow entries needed).  So, we instead ensure that
+     the transfer process can be reversed if we hit a memory
+     allocation failure mid-transfer.  */
 
   /* Merely reuse the extra old space into the new table.  */
 #if USE_OBSTACK
-  obstack_free (&new_table->entry_stack, NULL);
   new_table->entry_stack = table->entry_stack;
 #endif
   new_table->free_entry_list = table->free_entry_list;
 
-  for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
-    if (bucket->data)
-      for (cursor = bucket; cursor; cursor = next)
-	{
-	  void *data = cursor->data;
-	  struct hash_entry *new_bucket
-	    = (new_table->bucket
-	       + new_table->hasher (data, new_table->n_buckets));
+  if (transfer_entries (new_table, table, false))
+    {
+      /* Entries transferred successfully; tie up the loose ends.  */
+      free (table->bucket);
+      table->bucket = new_table->bucket;
+      table->bucket_limit = new_table->bucket_limit;
+      table->n_buckets = new_table->n_buckets;
+      table->n_buckets_used = new_table->n_buckets_used;
+      table->free_entry_list = new_table->free_entry_list;
+      /* table->n_entries and table->entry_stack already hold their value.  */
+      return true;
+    }
 
-	  if (! (new_bucket < new_table->bucket_limit))
-	    abort ();
+  /* We've allocated new_table->bucket (and possibly some entries),
+     exhausted the free list, and moved some but not all entries into
+     new_table.  We must undo the partial move before returning
+     failure.  The only way to get into this situation is if new_table
+     uses fewer buckets than the old table, so we will reclaim some
+     free entries as overflows in the new table are put back into
+     distinct buckets in the old table.
 
-	  next = cursor->next;
-
-	  if (new_bucket->data)
-	    {
-	      if (cursor == bucket)
-		{
-		  /* Allocate or recycle an entry, when moving from a bucket
-		     header into a bucket overflow.  */
-		  struct hash_entry *new_entry = allocate_entry (new_table);
-
-		  if (new_entry == NULL)
-		    return false;
-
-		  new_entry->data = data;
-		  new_entry->next = new_bucket->next;
-		  new_bucket->next = new_entry;
-		}
-	      else
-		{
-		  /* Merely relink an existing entry, when moving from a
-		     bucket overflow into a bucket overflow.  */
-		  cursor->next = new_bucket->next;
-		  new_bucket->next = cursor;
-		}
-	    }
-	  else
-	    {
-	      /* Free an existing entry, when moving from a bucket
-		 overflow into a bucket header.  Also take care of the
-		 simple case of moving from a bucket header into a bucket
-		 header.  */
-	      new_bucket->data = data;
-	      new_table->n_buckets_used++;
-	      if (cursor != bucket)
-		free_entry (new_table, cursor);
-	    }
-	}
-
-  free (table->bucket);
-  table->bucket = new_table->bucket;
-  table->bucket_limit = new_table->bucket_limit;
-  table->n_buckets = new_table->n_buckets;
-  table->n_buckets_used = new_table->n_buckets_used;
+     There are some pathological cases where a single pass through the
+     table requires more intermediate overflow entries than using two
+     passes.  Two passes give worse cache performance and takes
+     longer, but at this point, we're already out of memory, so slow
+     and safe is better than failure.  */
   table->free_entry_list = new_table->free_entry_list;
+  if (! (transfer_entries (table, new_table, true)
+         && transfer_entries (table, new_table, false)))
+    abort ();
   /* table->n_entries already holds its value.  */
-#if USE_OBSTACK
-  table->entry_stack = new_table->entry_stack;
-#endif
-  free (new_table);
-
-  return true;
+  free (new_table->bucket);
+  return false;
 }
 
-/* If ENTRY matches an entry already in the hash table, return the pointer
-   to the entry from the table.  Otherwise, insert ENTRY and return ENTRY.
-   Return NULL if the storage required for insertion cannot be allocated.  */
+/* Insert ENTRY into hash TABLE if there is not already a matching entry.
 
-void *
-hash_insert (Hash_table *table, const void *entry)
+   Return -1 upon memory allocation failure.
+   Return 1 if insertion succeeded.
+   Return 0 if there is already a matching entry in the table,
+   and in that case, if MATCHED_ENT is non-NULL, set *MATCHED_ENT
+   to that entry.
+
+   This interface is easier to use than hash_insert when you must
+   distinguish between the latter two cases.  More importantly,
+   hash_insert is unusable for some types of ENTRY values.  When using
+   hash_insert, the only way to distinguish those cases is to compare
+   the return value and ENTRY.  That works only when you can have two
+   different ENTRY values that point to data that compares "equal".  Thus,
+   when the ENTRY value is a simple scalar, you must use
+   hash_insert_if_absent.  ENTRY must not be NULL.  */
+int
+hash_insert_if_absent (Hash_table *table, void const *entry,
+                       void const **matched_ent)
 {
   void *data;
   struct hash_entry *bucket;
 
-  /* The caller cannot insert a NULL entry.  */
+  /* The caller cannot insert a NULL entry, since hash_lookup returns NULL
+     to indicate "not found", and hash_find_entry uses "bucket->data == NULL"
+     to indicate an empty bucket.  */
   if (! entry)
     abort ();
 
   /* If there's a matching entry already in the table, return that.  */
   if ((data = hash_find_entry (table, entry, &bucket, false)) != NULL)
-    return data;
-
-  /* ENTRY is not matched, it should be inserted.  */
-
-  if (bucket->data)
     {
-      struct hash_entry *new_entry = allocate_entry (table);
-
-      if (new_entry == NULL)
-	return NULL;
-
-      /* Add ENTRY in the overflow of the bucket.  */
-
-      new_entry->data = (void *) entry;
-      new_entry->next = bucket->next;
-      bucket->next = new_entry;
-      table->n_entries++;
-      return (void *) entry;
+      if (matched_ent)
+        *matched_ent = data;
+      return 0;
     }
-
-  /* Add ENTRY right in the bucket head.  */
-
-  bucket->data = (void *) entry;
-  table->n_entries++;
-  table->n_buckets_used++;
 
   /* If the growth threshold of the buckets in use has been reached, increase
      the table size and rehash.  There's no point in checking the number of
@@ -951,28 +1064,80 @@ hash_insert (Hash_table *table, const void *entry)
       > table->tuning->growth_threshold * table->n_buckets)
     {
       /* Check more fully, before starting real work.  If tuning arguments
-	 became invalid, the second check will rely on proper defaults.  */
+         became invalid, the second check will rely on proper defaults.  */
       check_tuning (table);
       if (table->n_buckets_used
-	  > table->tuning->growth_threshold * table->n_buckets)
-	{
-	  const Hash_tuning *tuning = table->tuning;
-	  float candidate =
-	    (tuning->is_n_buckets
-	     ? (table->n_buckets * tuning->growth_factor)
-	     : (table->n_buckets * tuning->growth_factor
-		* tuning->growth_threshold));
+          > table->tuning->growth_threshold * table->n_buckets)
+        {
+          const Hash_tuning *tuning = table->tuning;
+          float candidate =
+            (tuning->is_n_buckets
+             ? (table->n_buckets * tuning->growth_factor)
+             : (table->n_buckets * tuning->growth_factor
+                * tuning->growth_threshold));
 
-	  if (SIZE_MAX <= candidate)
-	    return NULL;
+          if (SIZE_MAX <= candidate)
+            return -1;
 
-	  /* If the rehash fails, arrange to return NULL.  */
-	  if (!hash_rehash (table, candidate))
-	    entry = NULL;
-	}
+          /* If the rehash fails, arrange to return NULL.  */
+          if (!hash_rehash (table, candidate))
+            return -1;
+
+          /* Update the bucket we are interested in.  */
+          if (hash_find_entry (table, entry, &bucket, false) != NULL)
+            abort ();
+        }
     }
 
-  return (void *) entry;
+  /* ENTRY is not matched, it should be inserted.  */
+
+  if (bucket->data)
+    {
+      struct hash_entry *new_entry = allocate_entry (table);
+
+      if (new_entry == NULL)
+        return -1;
+
+      /* Add ENTRY in the overflow of the bucket.  */
+
+      new_entry->data = (void *) entry;
+      new_entry->next = bucket->next;
+      bucket->next = new_entry;
+      table->n_entries++;
+      return 1;
+    }
+
+  /* Add ENTRY right in the bucket head.  */
+
+  bucket->data = (void *) entry;
+  table->n_entries++;
+  table->n_buckets_used++;
+
+  return 1;
+}
+
+/* hash_insert0 is the deprecated name for hash_insert_if_absent.
+   .  */
+int
+hash_insert0 (Hash_table *table, void const *entry, void const **matched_ent)
+{
+  return hash_insert_if_absent (table, entry, matched_ent);
+}
+
+/* If ENTRY matches an entry already in the hash table, return the pointer
+   to the entry from the table.  Otherwise, insert ENTRY and return ENTRY.
+   Return NULL if the storage required for insertion cannot be allocated.
+   This implementation does not support duplicate entries or insertion of
+   NULL.  */
+
+void *
+hash_insert (Hash_table *table, void const *entry)
+{
+  void const *matched_ent;
+  int err = hash_insert_if_absent (table, entry, &matched_ent);
+  return (err == -1
+          ? NULL
+          : (void *) (err == 0 ? matched_ent : entry));
 }
 
 /* If ENTRY is already in the table, remove it and return the just-deleted
@@ -995,27 +1160,45 @@ hash_delete (Hash_table *table, const void *entry)
       table->n_buckets_used--;
 
       /* If the shrink threshold of the buckets in use has been reached,
-	 rehash into a smaller table.  */
+         rehash into a smaller table.  */
 
       if (table->n_buckets_used
-	  < table->tuning->shrink_threshold * table->n_buckets)
-	{
-	  /* Check more fully, before starting real work.  If tuning arguments
-	     became invalid, the second check will rely on proper defaults.  */
-	  check_tuning (table);
-	  if (table->n_buckets_used
-	      < table->tuning->shrink_threshold * table->n_buckets)
-	    {
-	      const Hash_tuning *tuning = table->tuning;
-	      size_t candidate =
-		(tuning->is_n_buckets
-		 ? table->n_buckets * tuning->shrink_factor
-		 : (table->n_buckets * tuning->shrink_factor
-		    * tuning->growth_threshold));
+          < table->tuning->shrink_threshold * table->n_buckets)
+        {
+          /* Check more fully, before starting real work.  If tuning arguments
+             became invalid, the second check will rely on proper defaults.  */
+          check_tuning (table);
+          if (table->n_buckets_used
+              < table->tuning->shrink_threshold * table->n_buckets)
+            {
+              const Hash_tuning *tuning = table->tuning;
+              size_t candidate =
+                (tuning->is_n_buckets
+                 ? table->n_buckets * tuning->shrink_factor
+                 : (table->n_buckets * tuning->shrink_factor
+                    * tuning->growth_threshold));
 
-	      hash_rehash (table, candidate);
-	    }
-	}
+              if (!hash_rehash (table, candidate))
+                {
+                  /* Failure to allocate memory in an attempt to
+                     shrink the table is not fatal.  But since memory
+                     is low, we can at least be kind and free any
+                     spare entries, rather than keeping them tied up
+                     in the free entry list.  */
+#if ! USE_OBSTACK
+                  struct hash_entry *cursor = table->free_entry_list;
+                  struct hash_entry *next;
+                  while (cursor)
+                    {
+                      next = cursor->next;
+                      free (cursor);
+                      cursor = next;
+                    }
+                  table->free_entry_list = NULL;
+#endif
+                }
+            }
+        }
     }
 
   return data;
@@ -1028,22 +1211,22 @@ hash_delete (Hash_table *table, const void *entry)
 void
 hash_print (const Hash_table *table)
 {
-  struct hash_entry const *bucket;
+  struct hash_entry *bucket = (struct hash_entry *) table->bucket;
 
-  for (bucket = table->bucket; bucket < table->bucket_limit; bucket++)
+  for ( ; bucket < table->bucket_limit; bucket++)
     {
       struct hash_entry *cursor;
 
       if (bucket)
-	printf ("%lu:\n", (unsigned long int) (bucket - table->bucket));
+        printf ("%lu:\n", (unsigned long int) (bucket - table->bucket));
 
       for (cursor = bucket; cursor; cursor = cursor->next)
-	{
-	  char const *s = cursor->data;
-	  /* FIXME */
-	  if (s)
-	    printf ("  %s\n", s);
-	}
+        {
+          char const *s = cursor->data;
+          /* FIXME */
+          if (s)
+            printf ("  %s\n", s);
+        }
     }
 }
 

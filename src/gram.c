@@ -1,31 +1,30 @@
 /* Allocate input grammar variables for Bison.
 
-   Copyright (C) 1984, 1986, 1989, 2001, 2002, 2003, 2005, 2006 Free
-   Software Foundation, Inc.
+   Copyright (C) 1984, 1986, 1989, 2001-2003, 2005-2012 Free Software
+   Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
 #include "system.h"
 
-#include <quotearg.h>
-
+#include "complain.h"
+#include "getargs.h"
 #include "gram.h"
+#include "print-xml.h"
 #include "reader.h"
 #include "reduce.h"
 #include "symtab.h"
@@ -47,45 +46,23 @@ symbol_number *token_translations = NULL;
 
 int max_user_token_number = 256;
 
-/*--------------------------------------------------------------.
-| Return true IFF the rule has a `number' smaller than NRULES.  |
-`--------------------------------------------------------------*/
-
 bool
-rule_useful_p (rule *r)
+rule_useful_in_grammar_p (rule *r)
 {
   return r->number < nrules;
 }
 
-
-/*-------------------------------------------------------------.
-| Return true IFF the rule has a `number' higher than NRULES.  |
-`-------------------------------------------------------------*/
-
 bool
-rule_useless_p (rule *r)
+rule_useless_in_grammar_p (rule *r)
 {
-  return !rule_useful_p (r);
+  return !rule_useful_in_grammar_p (r);
 }
 
-
-/*--------------------------------------------------------------------.
-| Return true IFF the rule is not flagged as useful *and* is useful.  |
-| In other words, it was discarded because of conflicts.              |
-`--------------------------------------------------------------------*/
-
 bool
-rule_never_reduced_p (rule *r)
+rule_useless_in_parser_p (rule *r)
 {
-  return !r->useful && rule_useful_p (r);
+  return !r->useful && rule_useful_in_grammar_p (r);
 }
-
-
-/*----------------------------------------------------------------.
-| Print this RULE's number and lhs on OUT.  If a PREVIOUS_LHS was |
-| already displayed (by a previous call for another rule), avoid  |
-| useless repetitions.                                            |
-`----------------------------------------------------------------*/
 
 void
 rule_lhs_print (rule *r, symbol *previous_lhs, FILE *out)
@@ -104,10 +81,11 @@ rule_lhs_print (rule *r, symbol *previous_lhs, FILE *out)
     }
 }
 
-
-/*--------------------------------------.
-| Return the number of symbols in RHS.  |
-`--------------------------------------*/
+void
+rule_lhs_print_xml (rule *r, FILE *out, int level)
+{
+  xml_printf (out, level, "<lhs>%s</lhs>", r->lhs->tag);
+}
 
 int
 rule_rhs_length (rule *r)
@@ -118,11 +96,6 @@ rule_rhs_length (rule *r)
     ++res;
   return res;
 }
-
-
-/*-------------------------------.
-| Print this rule's RHS on OUT.  |
-`-------------------------------*/
 
 void
 rule_rhs_print (rule *r, FILE *out)
@@ -140,10 +113,25 @@ rule_rhs_print (rule *r, FILE *out)
     }
 }
 
-
-/*-------------------------.
-| Print this rule on OUT.  |
-`-------------------------*/
+static void
+rule_rhs_print_xml (rule *r, FILE *out, int level)
+{
+  if (*r->rhs >= 0)
+    {
+      item_number *rp;
+      xml_puts (out, level, "<rhs>");
+      for (rp = r->rhs; *rp >= 0; rp++)
+	xml_printf (out, level + 1, "<symbol>%s</symbol>",
+		    xml_escape (symbols[*rp]->tag));
+      xml_puts (out, level, "</rhs>");
+    }
+  else
+    {
+      xml_puts (out, level, "<rhs>");
+      xml_puts (out, level + 1, "<empty/>");
+      xml_puts (out, level, "</rhs>");
+    }
+}
 
 void
 rule_print (rule *r, FILE *out)
@@ -151,11 +139,6 @@ rule_print (rule *r, FILE *out)
   fprintf (out, "%s:", r->lhs->tag);
   rule_rhs_print (r, out);
 }
-
-
-/*------------------------.
-| Dump RITEM for traces.  |
-`------------------------*/
 
 void
 ritem_print (FILE *out)
@@ -169,11 +152,6 @@ ritem_print (FILE *out)
       fprintf (out, "  (rule %d)\n", item_number_as_rule_number (ritem[i]));
   fputs ("\n\n", out);
 }
-
-
-/*------------------------------------------.
-| Return the size of the longest rule RHS.  |
-`------------------------------------------*/
 
 size_t
 ritem_longest_rhs (void)
@@ -190,11 +168,6 @@ ritem_longest_rhs (void)
 
   return max;
 }
-
-
-/*-----------------------------------------------------------------.
-| Print the grammar's rules that match FILTER on OUT under TITLE.  |
-`-----------------------------------------------------------------*/
 
 void
 grammar_rules_partial_print (FILE *out, const char *title,
@@ -222,21 +195,48 @@ grammar_rules_partial_print (FILE *out, const char *title,
     fputs ("\n\n", out);
 }
 
-
-/*------------------------------------------.
-| Print the grammar's useful rules on OUT.  |
-`------------------------------------------*/
-
 void
 grammar_rules_print (FILE *out)
 {
-  grammar_rules_partial_print (out, _("Grammar"), rule_useful_p);
+  grammar_rules_partial_print (out, _("Grammar"), rule_useful_in_grammar_p);
 }
 
+void
+grammar_rules_print_xml (FILE *out, int level)
+{
+  rule_number r;
+  bool first = true;
 
-/*-------------------.
-| Dump the grammar.  |
-`-------------------*/
+  for (r = 0; r < nrules + nuseless_productions; r++)
+    {
+      if (first)
+	xml_puts (out, level + 1, "<rules>");
+      first = false;
+      {
+        char const *usefulness;
+        if (rule_useless_in_grammar_p (&rules[r]))
+          usefulness = "useless-in-grammar";
+        else if (rule_useless_in_parser_p (&rules[r]))
+          usefulness = "useless-in-parser";
+        else
+          usefulness = "useful";
+        xml_indent (out, level + 2);
+        fprintf (out, "<rule number=\"%d\" usefulness=\"%s\"",
+                 rules[r].number, usefulness);
+        if (rules[r].precsym)
+          fprintf (out, " percent_prec=\"%s\"",
+                   xml_escape (rules[r].precsym->tag));
+        fputs (">\n", out);
+      }
+      rule_lhs_print_xml (&rules[r], out, level + 3);
+      rule_rhs_print_xml (&rules[r], out, level + 3);
+      xml_puts (out, level + 2, "</rule>");
+    }
+  if (!first)
+    xml_puts (out, level + 1, "</rules>");
+  else
+   xml_puts (out, level + 1, "<rules/>");
+}
 
 void
 grammar_dump (FILE *out, const char *title)
@@ -301,24 +301,24 @@ grammar_dump (FILE *out, const char *title)
   fprintf (out, "\n\n");
 }
 
-
-/*------------------------------------------------------------------.
-| Report on STDERR the rules that are not flagged USEFUL, using the |
-| MESSAGE (which can be `useless rule' when invoked after grammar   |
-| reduction, or `never reduced' after conflicts were taken into     |
-| account).                                                         |
-`------------------------------------------------------------------*/
-
 void
-grammar_rules_never_reduced_report (const char *message)
+grammar_rules_useless_report (const char *message)
 {
   rule_number r;
   for (r = 0; r < nrules ; ++r)
     if (!rules[r].useful)
       {
-	location_print (stderr, rules[r].location);
-	fprintf (stderr, ": %s: %s: ", _("warning"), message);
-	rule_print (&rules[r], stderr);
+        if (feature_flag & feature_caret)
+          warn_at (rules[r].location, "%s", message);
+        else
+          {
+            warn_at (rules[r].location, "%s: ", message);
+            if (warnings_flag & warnings_other)
+              {
+                rule_print (&rules[r], stderr);
+                fflush (stderr);
+              }
+          }
       }
 }
 
