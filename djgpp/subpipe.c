@@ -1,11 +1,11 @@
 /* Subprocesses with pipes.
 
-   Copyright (C) 2005, 2006 Free Software Foundation, Inc.
+   Copyright (C) 2005-2012 Free Software Foundation, Inc.
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,15 +13,12 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 /* Written by Juan Manuel Guerrero <juan.guerrero@gmx.de>. */
 
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
+#include <config.h>
 
 #include "subpipe.h"
 
@@ -63,22 +60,33 @@ static char tmp_file_name[2][L_tmpnam];
   do {                                                                \
     close ((fd));                                                     \
     if (unlink ((name)))                                              \
-      error (EXIT_FAILURE, 0, _("removing of `%s' failed"), (name));  \
+      error (EXIT_FAILURE, 0, _("removing of '%s' failed"), (name));  \
   } while (0)
 
 
 void
 init_subpipe(void)
 {
+  char *tmpdir;
   int fd;
 
-  strcpy(tmp_file_name[0], "/dev/env/TMPDIR/bnXXXXXX");
+  tmpdir = getenv("TMPDIR");
+  if (tmpdir == NULL)
+    tmpdir = getenv("TMP");
+  if (tmpdir == NULL)
+    tmpdir = getenv("TEMP");
+  if (access(tmpdir, D_OK))
+    tmpdir = ".";
+
+  strcpy(tmp_file_name[0], tmpdir);
+  strcat(tmp_file_name[0], "/bnXXXXXX");
   fd = mkstemp(tmp_file_name[0]);
   if (fd < 0)
     error(EXIT_FAILURE, 0, _("creation of a temporary file failed"));
   close (fd);
 
-  strcpy(tmp_file_name[1], "/dev/env/TMPDIR/bnXXXXXX");
+  strcpy(tmp_file_name[1], tmpdir);
+  strcat(tmp_file_name[1], "/bnXXXXXX");
   fd = mkstemp(tmp_file_name[1]);
   if (fd < 0)
     error(EXIT_FAILURE, 0, _("creation of a temporary file failed"));
@@ -223,17 +231,17 @@ end_of_output_subpipe(pid_t pid, int fd[2])
   {
     remove_tmp_file(STDIN_FILENO, tmp_file_name[0]);
     remove_tmp_file(STDOUT_FILENO, tmp_file_name[1]);
-    error(EXIT_FAILURE, 0, _("subsidiary program `%s' interrupted"), program);
+    error(EXIT_FAILURE, 0, _("subsidiary program '%s' interrupted"), program);
   }
   if (status)
   {
     remove_tmp_file(STDIN_FILENO, tmp_file_name[0]);
     remove_tmp_file(STDOUT_FILENO, tmp_file_name[1]);
     error(EXIT_FAILURE, 0, _(errno == ENOENT
-			     ? "subsidiary program `%s' not found"
+			     ? "subsidiary program '%s' not found"
 			     : status < 1
-			     ? "subsidiary program `%s' failed"
-			     : "subsidiary program `%s' failed (status=%i, errno=%i)"), program, status, errno);
+			     ? "subsidiary program '%s' failed"
+			     : "subsidiary program '%s' failed (status=%i, errno=%i)"), program, status, errno);
   }
 
 
@@ -275,9 +283,9 @@ reap_subpipe(pid_t pid, char const *program)
   free(arguments);
 
   if (unlink(tmp_file_name[0]))
-    error(EXIT_FAILURE, 0, _("removing of `%s' failed"), tmp_file_name[0]);
+    error(EXIT_FAILURE, 0, _("removing of '%s' failed"), tmp_file_name[0]);
   if (unlink(tmp_file_name[1]))
-    error(EXIT_FAILURE, 0, _("removing of `%s' failed"), tmp_file_name[1]);
+    error(EXIT_FAILURE, 0, _("removing of '%s' failed"), tmp_file_name[1]);
 
   if (dup2(old_stdin, STDIN_FILENO) < 0)
     error(EXIT_FAILURE, 0, "restore of bison's stdin failed");

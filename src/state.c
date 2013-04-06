@@ -1,24 +1,21 @@
-/* Type definitions for nondeterministic finite state machine for Bison.
+/* Type definitions for the finite state machine for Bison.
 
-   Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006 Free Software
-   Foundation, Inc.
+   Copyright (C) 2001-2007, 2009-2012 Free Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
 #include "system.h"
@@ -28,6 +25,7 @@
 #include "complain.h"
 #include "gram.h"
 #include "state.h"
+#include "print-xml.h"
 
 
 			/*-------------------.
@@ -61,7 +59,7 @@ transitions_to (transitions *shifts, symbol_number sym)
   int j;
   for (j = 0; ; j++)
     {
-      assert (j < shifts->num);
+      aver (j < shifts->num);
       if (TRANSITION_SYMBOL (shifts, j) == sym)
 	return shifts->states[j];
     }
@@ -105,7 +103,7 @@ reductions_new (int num, rule **reds)
   size_t rules_size = num * sizeof *reds;
   reductions *res = xmalloc (offsetof (reductions, rules) + rules_size);
   res->num = num;
-  res->look_ahead_tokens = NULL;
+  res->lookahead_tokens = NULL;
   memcpy (res->rules, reds, rules_size);
   return res;
 }
@@ -135,7 +133,7 @@ state_new (symbol_number accessing_symbol,
   state *res;
   size_t items_size = nitems * sizeof *core;
 
-  assert (nstates < STATE_NUMBER_MAXIMUM);
+  aver (nstates < STATE_NUMBER_MAXIMUM);
 
   res = xmalloc (offsetof (state, items) + items_size);
   res->number = nstates++;
@@ -143,13 +141,41 @@ state_new (symbol_number accessing_symbol,
   res->transitions = NULL;
   res->reductions = NULL;
   res->errs = NULL;
+  res->state_list = NULL;
   res->consistent = 0;
   res->solved_conflicts = NULL;
+  res->solved_conflicts_xml = NULL;
 
   res->nitems = nitems;
   memcpy (res->items, core, items_size);
 
   state_hash_insert (res);
+
+  return res;
+}
+
+state *
+state_new_isocore (state const *s)
+{
+  state *res;
+  size_t items_size = s->nitems * sizeof *s->items;
+
+  aver (nstates < STATE_NUMBER_MAXIMUM);
+
+  res = xmalloc (offsetof (state, items) + items_size);
+  res->number = nstates++;
+  res->accessing_symbol = s->accessing_symbol;
+  res->transitions =
+    transitions_new (s->transitions->num, s->transitions->states);
+  res->reductions = reductions_new (s->reductions->num, s->reductions->rules);
+  res->errs = NULL;
+  res->state_list = NULL;
+  res->consistent = s->consistent;
+  res->solved_conflicts = NULL;
+  res->solved_conflicts_xml = NULL;
+
+  res->nitems = s->nitems;
+  memcpy (res->items, s->items, items_size);
 
   return res;
 }
@@ -176,7 +202,7 @@ state_free (state *s)
 void
 state_transitions_set (state *s, int num, state **trans)
 {
-  assert (!s->transitions);
+  aver (!s->transitions);
   s->transitions = transitions_new (num, trans);
 }
 
@@ -188,7 +214,7 @@ state_transitions_set (state *s, int num, state **trans)
 void
 state_reductions_set (state *s, int num, rule **reds)
 {
-  assert (!s->reductions);
+  aver (!s->reductions);
   s->reductions = reductions_new (num, reds);
 }
 
@@ -212,37 +238,60 @@ state_reduction_find (state *s, rule *r)
 void
 state_errs_set (state *s, int num, symbol **tokens)
 {
-  assert (!s->errs);
+  aver (!s->errs);
   s->errs = errs_new (num, tokens);
 }
 
 
 
-/*---------------------------------------------------.
-| Print on OUT all the look-ahead tokens such that S |
-| wants to reduce R.                                 |
-`---------------------------------------------------*/
+/*--------------------------------------------------.
+| Print on OUT all the lookahead tokens such that S |
+| wants to reduce R.                                |
+`--------------------------------------------------*/
 
 void
-state_rule_look_ahead_tokens_print (state *s, rule *r, FILE *out)
+state_rule_lookahead_tokens_print (state *s, rule *r, FILE *out)
 {
   /* Find the reduction we are handling.  */
   reductions *reds = s->reductions;
   int red = state_reduction_find (s, r);
 
   /* Print them if there are.  */
-  if (reds->look_ahead_tokens && red != -1)
+  if (reds->lookahead_tokens && red != -1)
     {
       bitset_iterator biter;
       int k;
       char const *sep = "";
       fprintf (out, "  [");
-      BITSET_FOR_EACH (biter, reds->look_ahead_tokens[red], k, 0)
+      BITSET_FOR_EACH (biter, reds->lookahead_tokens[red], k, 0)
 	{
 	  fprintf (out, "%s%s", sep, symbols[k]->tag);
 	  sep = ", ";
 	}
       fprintf (out, "]");
+    }
+}
+
+void
+state_rule_lookahead_tokens_print_xml (state *s, rule *r,
+				       FILE *out, int level)
+{
+  /* Find the reduction we are handling.  */
+  reductions *reds = s->reductions;
+  int red = state_reduction_find (s, r);
+
+  /* Print them if there are.  */
+  if (reds->lookahead_tokens && red != -1)
+    {
+      bitset_iterator biter;
+      int k;
+      xml_puts (out, level, "<lookaheads>");
+      BITSET_FOR_EACH (biter, reds->lookahead_tokens[red], k, 0)
+	{
+	  xml_printf (out, level + 1, "<symbol>%s</symbol>",
+		      xml_escape (symbols[k]->tag));
+	}
+      xml_puts (out, level, "</lookaheads>");
     }
 }
 
@@ -329,7 +378,8 @@ state_hash_free (void)
 void
 state_hash_insert (state *s)
 {
-  hash_insert (state_table, s);
+  if (!hash_insert (state_table, s))
+    xalloc_die ();
 }
 
 
@@ -350,6 +400,52 @@ state_hash_lookup (size_t nitems, item_number *core)
   entry = hash_lookup (state_table, probe);
   free (probe);
   return entry;
+}
+
+
+/*--------------------------------------------------------.
+| Record S and all states reachable from S in REACHABLE.  |
+`--------------------------------------------------------*/
+
+static void
+state_record_reachable_states (state *s, bitset reachable)
+{
+  if (bitset_test (reachable, s->number))
+    return;
+  bitset_set (reachable, s->number);
+  {
+    int i;
+    for (i = 0; i < s->transitions->num; ++i)
+      if (!TRANSITION_IS_DISABLED (s->transitions, i))
+        state_record_reachable_states (s->transitions->states[i], reachable);
+  }
+}
+
+void
+state_remove_unreachable_states (state_number old_to_new[])
+{
+  state_number nstates_reachable = 0;
+  bitset reachable = bitset_create (nstates, BITSET_FIXED);
+  state_record_reachable_states (states[0], reachable);
+  {
+    state_number i;
+    for (i = 0; i < nstates; ++i)
+      {
+        if (bitset_test (reachable, states[i]->number))
+          {
+            states[nstates_reachable] = states[i];
+            states[nstates_reachable]->number = nstates_reachable;
+            old_to_new[i] = nstates_reachable++;
+          }
+        else
+          {
+            state_free (states[i]);
+            old_to_new[i] = nstates;
+          }
+      }
+  }
+  nstates = nstates_reachable;
+  bitset_free (reachable);
 }
 
 /* All the decorated states, indexed by the state number.  */

@@ -1,23 +1,21 @@
 /* Keep a unique copy of strings.
 
-   Copyright (C) 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+   Copyright (C) 2002-2005, 2009-2012 Free Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
 #include "system.h"
@@ -25,6 +23,7 @@
 #include <error.h>
 #include <hash.h>
 #include <quotearg.h>
+#include <stdarg.h>
 
 #include "uniqstr.h"
 
@@ -49,11 +48,27 @@ uniqstr_new (char const *str)
     {
       /* First insertion in the hash. */
       res = xstrdup (str);
-      hash_insert (uniqstrs_table, res);
+      if (!hash_insert (uniqstrs_table, res))
+        xalloc_die ();
     }
   return res;
 }
 
+uniqstr
+uniqstr_vsprintf (char const *format, ...)
+{
+  va_list args;
+  size_t length;
+  va_start (args, format);
+  length = vsnprintf (NULL, 0, format, args);
+  va_end (args);
+
+  char res[length + 1];
+  va_start (args, format);
+  vsprintf (res, format, args);
+  va_end (args);
+  return uniqstr_new (res);
+}
 
 /*------------------------------.
 | Abort if S is not a uniqstr.  |
