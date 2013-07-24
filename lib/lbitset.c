@@ -1,10 +1,13 @@
 /* Functions to support link list bitsets.
-   Copyright (C) 2002, 2003, 2004, 2006 Free Software Foundation, Inc.
+
+   Copyright (C) 2002-2004, 2006, 2009-2012 Free Software Foundation,
+   Inc.
+
    Contributed by Michael Hayes (m.hayes@elec.canterbury.ac.nz).
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation, either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -13,14 +16,12 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
+#include <config.h>
 
 #include "lbitset.h"
+
 #include "obstack.h"
 #include <stddef.h>
 #include <stdlib.h>
@@ -351,7 +352,7 @@ lbitset_elt_find (bitset bset, bitset_windex windex,
 
       /* ELT is the nearest to the one we want.  If it's not the one
 	 we want, the one we want does not exist.  */
-      if (elt && (windex - elt->index) < LBITSET_ELT_WORDS)
+      if (windex - elt->index < LBITSET_ELT_WORDS)
 	{
 	  bset->b.cindex = elt->index;
 	  bset->b.csize = LBITSET_ELT_WORDS;
@@ -935,16 +936,11 @@ lbitset_ones (bitset dst)
 static void
 lbitset_not (bitset dst, bitset src)
 {
-  lbitset_elt *elt;
   lbitset_elt *selt;
   lbitset_elt *delt;
   bitset_windex i;
   unsigned int j;
   bitset_windex windex;
-
-  /* This is another unfriendly operation for a linked list
-     bitset!  */
-  elt = LBITSET_TAIL (dst);
 
   windex = (BITSET_SIZE_ (dst) + BITSET_WORD_BITS - 1) / BITSET_WORD_BITS;
 

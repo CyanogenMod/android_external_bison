@@ -1,12 +1,12 @@
 /* Bison Grammar Scanner                             -*- C -*-
 
-   Copyright (C) 2002, 2003, 2004, 2005, 2006 Free Software Foundation, Inc.
+   Copyright (C) 2002-2012 Free Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation, either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -15,12 +15,9 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
-   02110-1301  USA
-*/
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-%option debug nodefault nounput noyywrap never-interactive
+%option debug nodefault noinput nounput noyywrap never-interactive
 %option prefix="gram_" outfile="lex.yy.c"
 
 %{
@@ -29,112 +26,56 @@
 #undef gram_wrap
 #define gram_wrap() 1
 
-#include "system.h"
-
-#include <mbswidth.h>
-#include <quote.h>
+#define FLEX_PREFIX(Id) gram_ ## Id
+#include "flex-scanner.h"
 
 #include "complain.h"
 #include "files.h"
-#include "getargs.h"
 #include "gram.h"
 #include "quotearg.h"
 #include "reader.h"
 #include "uniqstr.h"
 
-#define YY_USER_INIT					\
-  do							\
-    {							\
-      scanner_cursor.file = current_file;		\
-      scanner_cursor.line = 1;				\
-      scanner_cursor.column = 1;			\
-      code_start = scanner_cursor;			\
-    }							\
-  while (0)
+#include <c-ctype.h>
+#include <mbswidth.h>
+#include <quote.h>
 
-/* Pacify "gcc -Wmissing-prototypes" when flex 2.5.31 is used.  */
-int gram_get_lineno (void);
-FILE *gram_get_in (void);
-FILE *gram_get_out (void);
-int gram_get_leng (void);
-char *gram_get_text (void);
-void gram_set_lineno (int);
-void gram_set_in (FILE *);
-void gram_set_out (FILE *);
-int gram_get_debug (void);
-void gram_set_debug (int);
-int gram_lex_destroy (void);
+#include "scan-gram.h"
+
+#define YY_DECL GRAM_LEX_DECL
+
+#define YY_USER_INIT					\
+   code_start = scanner_cursor = loc->start;		\
 
 /* Location of scanner cursor.  */
-boundary scanner_cursor;
+static boundary scanner_cursor;
 
-static void adjust_location (location *, char const *, size_t);
-#define YY_USER_ACTION  adjust_location (loc, yytext, yyleng);
+#define YY_USER_ACTION  location_compute (loc, &scanner_cursor, yytext, yyleng);
 
 static size_t no_cr_read (FILE *, char *, size_t);
 #define YY_INPUT(buf, result, size) ((result) = no_cr_read (yyin, buf, size))
 
-
-/* OBSTACK_FOR_STRING -- Used to store all the characters that we need to
-   keep (to construct ID, STRINGS etc.).  Use the following macros to
-   use it.
-
-   Use STRING_GROW to append what has just been matched, and
-   STRING_FINISH to end the string (it puts the ending 0).
-   STRING_FINISH also stores this string in LAST_STRING, which can be
-   used, and which is used by STRING_FREE to free the last string.  */
-
-static struct obstack obstack_for_string;
-
-/* A string representing the most recently saved token.  */
-char *last_string;
-
-/* The location of the most recently saved token, if it was a
-   BRACED_CODE token; otherwise, this has an unspecified value.  */
-location last_braced_code_loc;
-
-#define STRING_GROW   \
-  obstack_grow (&obstack_for_string, yytext, yyleng)
-
-#define STRING_FINISH					\
-  do {							\
-    obstack_1grow (&obstack_for_string, '\0');		\
-    last_string = obstack_finish (&obstack_for_string);	\
+#define ROLLBACK_CURRENT_TOKEN                                  \
+  do {                                                          \
+    scanner_cursor.column -= mbsnwidth (yytext, yyleng, 0);	\
+    yyless (0);                                                 \
   } while (0)
 
-#define STRING_FREE \
-  obstack_free (&obstack_for_string, last_string)
+/* A string representing the most recently saved token.  */
+static char *last_string;
+
+/* Bracketed identifier. */
+static uniqstr bracketed_id_str = 0;
+static location bracketed_id_loc;
+static boundary bracketed_id_start;
+static int bracketed_id_context_state = 0;
 
 void
-scanner_last_string_free (void)
+gram_scanner_last_string_free (void)
 {
   STRING_FREE;
 }
 
-/* Within well-formed rules, RULE_LENGTH is the number of values in
-   the current rule so far, which says where to find `$0' with respect
-   to the top of the stack.  It is not the same as the rule->length in
-   the case of mid rule actions.
-
-   Outside of well-formed rules, RULE_LENGTH has an undefined value.  */
-static int rule_length;
-
-static void rule_length_overflow (location) __attribute__ ((__noreturn__));
-
-/* Increment the rule length by one, checking for overflow.  */
-static inline void
-increment_rule_length (location loc)
-{
-  rule_length++;
-
-  /* Don't allow rule_length == INT_MAX, since that might cause
-     confusion with strtol if INT_MAX == LONG_MAX.  */
-  if (rule_length == INT_MAX)
-    rule_length_overflow (loc);
-}
-
-static void handle_dollar (int token_type, char *cp, location loc);
-static void handle_at (int token_type, char *cp, location loc);
 static void handle_syncline (char *, location);
 static unsigned long int scan_integer (char const *p, int base, location loc);
 static int convert_ucn_to_byte (char const *hex_text);
@@ -142,15 +83,29 @@ static void unexpected_eof (boundary, char const *);
 static void unexpected_newline (boundary, char const *);
 
 %}
-%x SC_COMMENT SC_LINE_COMMENT SC_YACC_COMMENT
-%x SC_STRING SC_CHARACTER
-%x SC_AFTER_IDENTIFIER
+ /* A C-like comment in directives/rules. */
+%x SC_YACC_COMMENT
+ /* Strings and characters in directives/rules. */
 %x SC_ESCAPED_STRING SC_ESCAPED_CHARACTER
-%x SC_PRE_CODE SC_BRACED_CODE SC_PROLOGUE SC_EPILOGUE
+ /* A identifier was just read in directives/rules.  Special state
+    to capture the sequence 'identifier :'. */
+%x SC_AFTER_IDENTIFIER
 
-letter	  [.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_]
-id	  {letter}({letter}|[0-9])*
-directive %{letter}({letter}|[0-9]|-)*
+ /* Three types of user code:
+    - prologue (code between '%{' '%}' in the first section, before %%);
+    - actions, printers, union, etc, (between braced in the middle section);
+    - epilogue (everything after the second %%). */
+%x SC_PROLOGUE SC_BRACED_CODE SC_EPILOGUE
+ /* C and C++ comments in code. */
+%x SC_COMMENT SC_LINE_COMMENT
+ /* Strings and characters in code. */
+%x SC_STRING SC_CHARACTER
+ /* Bracketed identifiers support. */
+%x SC_BRACKETED_ID SC_RETURN_BRACKETED_ID
+
+letter	   [.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_]
+notletter [^.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_]{-}[%\{]
+id	  {letter}({letter}|[-0-9])*
 int	  [0-9]+
 
 /* POSIX says that a tag must be both an id and a C union member, but
@@ -165,16 +120,13 @@ splice	 (\\[ \f\t\v]*\n)*
 %%
 %{
   /* Nesting level of the current code in braces.  */
-  int braces_level IF_LINT (= 0);
+  int braces_level PACIFY_CC (= 0);
 
   /* Parent context state, when applicable.  */
-  int context_state IF_LINT (= 0);
-
-  /* Token type to return, when applicable.  */
-  int token_type IF_LINT (= 0);
+  int context_state PACIFY_CC (= 0);
 
   /* Location of most recent identifier, when applicable.  */
-  location id_loc IF_LINT (= empty_location);
+  location id_loc PACIFY_CC (= empty_location);
 
   /* Where containing code started, when applicable.  Its initial
      value is relevant only when yylex is invoked in the SC_EPILOGUE
@@ -183,7 +135,7 @@ splice	 (\\[ \f\t\v]*\n)*
 
   /* Where containing comment or string or character literal started,
      when applicable.  */
-  boundary token_start IF_LINT (= scanner_cursor);
+  boundary token_start PACIFY_CC (= scanner_cursor);
 %}
 
 
@@ -191,12 +143,12 @@ splice	 (\\[ \f\t\v]*\n)*
   | Scanning white space.  |
   `-----------------------*/
 
-<INITIAL,SC_AFTER_IDENTIFIER,SC_PRE_CODE>
+<INITIAL,SC_AFTER_IDENTIFIER,SC_BRACKETED_ID,SC_RETURN_BRACKETED_ID>
 {
   /* Comments and white space.  */
-  ","	       warn_at (*loc, _("stray `,' treated as white space"));
+  ","          warn_at (*loc, _("stray ',' treated as white space"));
   [ \f\n\t\v]  |
-  "//".*       ;
+  "//".*       continue;
   "/*" {
     token_start = loc->start;
     context_state = YY_START;
@@ -205,7 +157,7 @@ splice	 (\\[ \f\t\v]*\n)*
 
   /* #line directives are not documented, and may be withdrawn or
      modified in future versions of Bison.  */
-  ^"#line "{int}" \"".*"\"\n" {
+  ^"#line "{int}(" \"".*"\"")?"\n" {
     handle_syncline (yytext + sizeof "#line " - 1, *loc);
   }
 }
@@ -214,61 +166,72 @@ splice	 (\\[ \f\t\v]*\n)*
   /*----------------------------.
   | Scanning Bison directives.  |
   `----------------------------*/
+
+  /* For directives that are also command line options, the regex must be
+	"%..."
+     after "[-_]"s are removed, and the directive must match the --long
+     option name, with a single string argument.  Otherwise, add exceptions
+     to ../build-aux/cross-options.pl.  */
+
 <INITIAL>
 {
-  "%binary"               return PERCENT_NONASSOC;
-  "%debug"                return PERCENT_DEBUG;
-  "%default"[-_]"prec"    return PERCENT_DEFAULT_PREC;
-  "%define"               return PERCENT_DEFINE;
-  "%defines"              return PERCENT_DEFINES;
-  "%destructor"		  token_type = PERCENT_DESTRUCTOR; BEGIN SC_PRE_CODE;
-  "%dprec"		  return PERCENT_DPREC;
-  "%error"[-_]"verbose"   return PERCENT_ERROR_VERBOSE;
-  "%expect"               return PERCENT_EXPECT;
-  "%expect"[-_]"rr"	  return PERCENT_EXPECT_RR;
-  "%file-prefix"          return PERCENT_FILE_PREFIX;
+  "%binary"                         return PERCENT_NONASSOC;
+  "%code"                           return PERCENT_CODE;
+  "%debug"                          return PERCENT_DEBUG;
+  "%default"[-_]"prec"              return PERCENT_DEFAULT_PREC;
+  "%define"                         return PERCENT_DEFINE;
+  "%defines"                        return PERCENT_DEFINES;
+  "%destructor"                     return PERCENT_DESTRUCTOR;
+  "%dprec"                          return PERCENT_DPREC;
+  "%error"[-_]"verbose"             return PERCENT_ERROR_VERBOSE;
+  "%expect"                         return PERCENT_EXPECT;
+  "%expect"[-_]"rr"                 return PERCENT_EXPECT_RR;
+  "%file-prefix"                    return PERCENT_FILE_PREFIX;
   "%fixed"[-_]"output"[-_]"files"   return PERCENT_YACC;
-  "%initial-action"       token_type = PERCENT_INITIAL_ACTION; BEGIN SC_PRE_CODE;
-  "%glr-parser"           return PERCENT_GLR_PARSER;
-  "%left"                 return PERCENT_LEFT;
-  "%lex-param"		  token_type = PERCENT_LEX_PARAM; BEGIN SC_PRE_CODE;
-  "%locations"            return PERCENT_LOCATIONS;
-  "%merge"		  return PERCENT_MERGE;
-  "%name"[-_]"prefix"     return PERCENT_NAME_PREFIX;
-  "%no"[-_]"default"[-_]"prec"	return PERCENT_NO_DEFAULT_PREC;
-  "%no"[-_]"lines"        return PERCENT_NO_LINES;
-  "%nonassoc"             return PERCENT_NONASSOC;
-  "%nondeterministic-parser"   return PERCENT_NONDETERMINISTIC_PARSER;
-  "%nterm"                return PERCENT_NTERM;
-  "%output"               return PERCENT_OUTPUT;
-  "%parse-param"	  token_type = PERCENT_PARSE_PARAM; BEGIN SC_PRE_CODE;
-  "%prec"                 rule_length--; return PERCENT_PREC;
-  "%printer"              token_type = PERCENT_PRINTER; BEGIN SC_PRE_CODE;
-  "%pure"[-_]"parser"     return PERCENT_PURE_PARSER;
-  "%require"              return PERCENT_REQUIRE;
-  "%right"                return PERCENT_RIGHT;
-  "%skeleton"             return PERCENT_SKELETON;
-  "%start"                return PERCENT_START;
-  "%term"                 return PERCENT_TOKEN;
-  "%token"                return PERCENT_TOKEN;
-  "%token"[-_]"table"     return PERCENT_TOKEN_TABLE;
-  "%type"                 return PERCENT_TYPE;
-  "%union"		  token_type = PERCENT_UNION; BEGIN SC_PRE_CODE;
-  "%verbose"              return PERCENT_VERBOSE;
-  "%yacc"                 return PERCENT_YACC;
+  "%initial-action"                 return PERCENT_INITIAL_ACTION;
+  "%glr-parser"                     return PERCENT_GLR_PARSER;
+  "%language"                       return PERCENT_LANGUAGE;
+  "%left"                           return PERCENT_LEFT;
+  "%lex-param"                      return PERCENT_LEX_PARAM;
+  "%locations"                      return PERCENT_LOCATIONS;
+  "%merge"                          return PERCENT_MERGE;
+  "%name"[-_]"prefix"               return PERCENT_NAME_PREFIX;
+  "%no"[-_]"default"[-_]"prec"      return PERCENT_NO_DEFAULT_PREC;
+  "%no"[-_]"lines"                  return PERCENT_NO_LINES;
+  "%nonassoc"                       return PERCENT_NONASSOC;
+  "%nondeterministic-parser"        return PERCENT_NONDETERMINISTIC_PARSER;
+  "%nterm"                          return PERCENT_NTERM;
+  "%output"                         return PERCENT_OUTPUT;
+  "%parse-param"                    return PERCENT_PARSE_PARAM;
+  "%prec"                           return PERCENT_PREC;
+  "%printer"                        return PERCENT_PRINTER;
+  "%pure"[-_]"parser"               return PERCENT_PURE_PARSER;
+  "%require"                        return PERCENT_REQUIRE;
+  "%right"                          return PERCENT_RIGHT;
+  "%skeleton"                       return PERCENT_SKELETON;
+  "%start"                          return PERCENT_START;
+  "%term"                           return PERCENT_TOKEN;
+  "%token"                          return PERCENT_TOKEN;
+  "%token"[-_]"table"               return PERCENT_TOKEN_TABLE;
+  "%type"                           return PERCENT_TYPE;
+  "%union"                          return PERCENT_UNION;
+  "%verbose"                        return PERCENT_VERBOSE;
+  "%yacc"                           return PERCENT_YACC;
 
-  {directive} {
+  "%"{id}|"%"{notletter}([[:graph:]])+ {
     complain_at (*loc, _("invalid directive: %s"), quote (yytext));
   }
 
   "="                     return EQUAL;
-  "|"                     rule_length = 0; return PIPE;
+  "|"                     return PIPE;
   ";"                     return SEMICOLON;
+  "<*>"                   return TYPE_TAG_ANY;
+  "<>"                    return TYPE_TAG_NONE;
 
   {id} {
-    val->symbol = symbol_get (yytext, *loc);
+    val->uniqstr = uniqstr_new (yytext);
     id_loc = *loc;
-    increment_rule_length (*loc);
+    bracketed_id_str = NULL;
     BEGIN SC_AFTER_IDENTIFIER;
   }
 
@@ -281,8 +244,14 @@ splice	 (\\[ \f\t\v]*\n)*
     return INT;
   }
 
-  /* Characters.  We don't check there is only one.  */
-  "'"	      STRING_GROW; token_start = loc->start; BEGIN SC_ESCAPED_CHARACTER;
+  /* Identifiers may not start with a digit.  Yet, don't silently
+     accept "1FOO" as "1 FOO".  */
+  {int}{id} {
+    complain_at (*loc, _("invalid identifier: %s"), quote (yytext));
+  }
+
+  /* Characters.  */
+  "'"	      token_start = loc->start; BEGIN SC_ESCAPED_CHARACTER;
 
   /* Strings. */
   "\""	      token_start = loc->start; BEGIN SC_ESCAPED_STRING;
@@ -292,10 +261,7 @@ splice	 (\\[ \f\t\v]*\n)*
 
   /* Code in between braces.  */
   "{" {
-    if (current_rule && current_rule->action)
-      grammar_midrule_action ();
     STRING_GROW;
-    token_type = BRACED_CODE;
     braces_level = 0;
     code_start = loc->start;
     BEGIN SC_BRACED_CODE;
@@ -317,8 +283,17 @@ splice	 (\\[ \f\t\v]*\n)*
     return PERCENT_PERCENT;
   }
 
-  . {
-    complain_at (*loc, _("invalid character: %s"), quote (yytext));
+  "[" {
+    bracketed_id_str = NULL;
+    bracketed_id_start = loc->start;
+    bracketed_id_context_state = YY_START;
+    BEGIN SC_BRACKETED_ID;
+  }
+
+  [^\[%A-Za-z0-9_<>{}\"\'*;|=/, \f\n\t\v]+|. {
+    complain_at (*loc, "%s: %s",
+                 ngettext ("invalid character", "invalid characters", yyleng),
+                 quote_mem (yytext, yyleng));
   }
 
   <<EOF>> {
@@ -334,41 +309,113 @@ splice	 (\\[ \f\t\v]*\n)*
 
 <SC_AFTER_IDENTIFIER>
 {
+  "[" {
+    if (bracketed_id_str)
+      {
+	ROLLBACK_CURRENT_TOKEN;
+	BEGIN SC_RETURN_BRACKETED_ID;
+	*loc = id_loc;
+	return ID;
+      }
+    else
+      {
+	bracketed_id_start = loc->start;
+	bracketed_id_context_state = YY_START;
+	BEGIN SC_BRACKETED_ID;
+      }
+  }
   ":" {
-    rule_length = 0;
+    BEGIN (bracketed_id_str ? SC_RETURN_BRACKETED_ID : INITIAL);
     *loc = id_loc;
-    BEGIN INITIAL;
     return ID_COLON;
   }
   . {
-    scanner_cursor.column -= mbsnwidth (yytext, yyleng, 0);
-    yyless (0);
+    ROLLBACK_CURRENT_TOKEN;
+    BEGIN (bracketed_id_str ? SC_RETURN_BRACKETED_ID : INITIAL);
     *loc = id_loc;
-    BEGIN INITIAL;
     return ID;
   }
   <<EOF>> {
+    BEGIN (bracketed_id_str ? SC_RETURN_BRACKETED_ID : INITIAL);
     *loc = id_loc;
-    BEGIN INITIAL;
     return ID;
+  }
+}
+
+  /*--------------------------------.
+  | Scanning bracketed identifiers. |
+  `--------------------------------*/
+
+<SC_BRACKETED_ID>
+{
+  {id} {
+    if (bracketed_id_str)
+      {
+	complain_at (*loc, _("unexpected identifier in bracketed name: %s"),
+		     quote (yytext));
+      }
+    else
+      {
+	bracketed_id_str = uniqstr_new (yytext);
+	bracketed_id_loc = *loc;
+      }
+  }
+  "]" {
+    BEGIN bracketed_id_context_state;
+    if (bracketed_id_str)
+      {
+	if (INITIAL == bracketed_id_context_state)
+	  {
+	    val->uniqstr = bracketed_id_str;
+	    bracketed_id_str = 0;
+	    *loc = bracketed_id_loc;
+	    return BRACKETED_ID;
+	  }
+      }
+    else
+      complain_at (*loc, _("an identifier expected"));
+  }
+
+  [^\].A-Za-z0-9_/ \f\n\t\v]+|. {
+    complain_at (*loc, "%s: %s",
+                 ngettext ("invalid character in bracketed name",
+                           "invalid characters in bracketed name", yyleng),
+                 quote_mem (yytext, yyleng));
+  }
+
+  <<EOF>> {
+    BEGIN bracketed_id_context_state;
+    unexpected_eof (bracketed_id_start, "]");
+  }
+}
+
+<SC_RETURN_BRACKETED_ID>
+{
+  . {
+    ROLLBACK_CURRENT_TOKEN;
+    val->uniqstr = bracketed_id_str;
+    bracketed_id_str = 0;
+    *loc = bracketed_id_loc;
+    BEGIN INITIAL;
+    return BRACKETED_ID;
   }
 }
 
 
   /*---------------------------------------------------------------.
-  | Scanning a Yacc comment.  The initial `/ *' is already eaten.  |
+  | Scanning a Yacc comment.  The initial '/ *' is already eaten.  |
   `---------------------------------------------------------------*/
 
 <SC_YACC_COMMENT>
 {
   "*/"     BEGIN context_state;
-  .|\n	   ;
+  .|\n	   continue;
   <<EOF>>  unexpected_eof (token_start, "*/"); BEGIN context_state;
 }
 
 
   /*------------------------------------------------------------.
-  | Scanning a C comment.  The initial `/ *' is already eaten.  |
+  | Scanning a C comment.  The initial '/ *' is already eaten.  |
   `------------------------------------------------------------*/
 
 <SC_COMMENT>
@@ -379,7 +426,7 @@ splice	 (\\[ \f\t\v]*\n)*
 
 
   /*--------------------------------------------------------------.
-  | Scanning a line comment.  The initial `//' is already eaten.  |
+  | Scanning a line comment.  The initial '//' is already eaten.  |
   `--------------------------------------------------------------*/
 
 <SC_LINE_COMMENT>
@@ -397,16 +444,23 @@ splice	 (\\[ \f\t\v]*\n)*
 
 <SC_ESCAPED_STRING>
 {
-  "\"" {
+  "\""|"\n" {
+    if (yytext[0] == '\n')
+      unexpected_newline (token_start, "\"");
     STRING_FINISH;
     loc->start = token_start;
     val->chars = last_string;
-    increment_rule_length (*loc);
     BEGIN INITIAL;
     return STRING;
   }
-  \n		unexpected_newline (token_start, "\"");	BEGIN INITIAL;
-  <<EOF>>	unexpected_eof (token_start, "\"");	BEGIN INITIAL;
+  <<EOF>> {
+    unexpected_eof (token_start, "\"");
+    STRING_FINISH;
+    loc->start = token_start;
+    val->chars = last_string;
+    BEGIN INITIAL;
+    return STRING;
+  }
 }
 
   /*----------------------------------------------------------.
@@ -416,24 +470,47 @@ splice	 (\\[ \f\t\v]*\n)*
 
 <SC_ESCAPED_CHARACTER>
 {
-  "'" {
-    unsigned char last_string_1;
-    STRING_GROW;
+  "'"|"\n" {
     STRING_FINISH;
     loc->start = token_start;
-    val->symbol = symbol_get (quotearg_style (escape_quoting_style,
-					      last_string),
-			      *loc);
-    symbol_class_set (val->symbol, token_sym, *loc, false);
-    last_string_1 = last_string[1];
-    symbol_user_token_number_set (val->symbol, last_string_1, *loc);
+    val->character = last_string[0];
+    {
+      /* FIXME: Eventually, make these errors.  */
+      if (last_string[0] == '\0')
+        {
+          warn_at (*loc, _("empty character literal"));
+          /* '\0' seems dangerous even if we are about to complain.  */
+          val->character = '\'';
+        }
+      else if (last_string[1] != '\0')
+        warn_at (*loc, _("extra characters in character literal"));
+    }
+    if (yytext[0] == '\n')
+      unexpected_newline (token_start, "'");
     STRING_FREE;
-    increment_rule_length (*loc);
     BEGIN INITIAL;
-    return ID;
+    return CHAR;
   }
-  \n		unexpected_newline (token_start, "'");	BEGIN INITIAL;
-  <<EOF>>	unexpected_eof (token_start, "'");	BEGIN INITIAL;
+  <<EOF>> {
+    STRING_FINISH;
+    loc->start = token_start;
+    val->character = last_string[0];
+    {
+      /* FIXME: Eventually, make these errors.  */
+      if (last_string[0] == '\0')
+        {
+          warn_at (*loc, _("empty character literal"));
+          /* '\0' seems dangerous even if we are about to complain.  */
+          val->character = '\'';
+        }
+      else if (last_string[1] != '\0')
+        warn_at (*loc, _("extra characters in character literal"));
+    }
+    unexpected_eof (token_start, "'");
+    STRING_FREE;
+    BEGIN INITIAL;
+    return CHAR;
+  }
 }
 
 <SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING>
@@ -450,10 +527,9 @@ splice	 (\\[ \f\t\v]*\n)*
 {
   \\[0-7]{1,3} {
     unsigned long int c = strtoul (yytext + 1, NULL, 8);
-    if (UCHAR_MAX < c)
-      complain_at (*loc, _("invalid escape sequence: %s"), quote (yytext));
-    else if (! c)
-      complain_at (*loc, _("invalid null character: %s"), quote (yytext));
+    if (!c || UCHAR_MAX < c)
+      complain_at (*loc, _("invalid number after \\-escape: %s"),
+                   yytext+1);
     else
       obstack_1grow (&obstack_for_string, c);
   }
@@ -461,10 +537,9 @@ splice	 (\\[ \f\t\v]*\n)*
   \\x[0-9abcdefABCDEF]+ {
     verify (UCHAR_MAX < ULONG_MAX);
     unsigned long int c = strtoul (yytext + 2, NULL, 16);
-    if (UCHAR_MAX < c)
-      complain_at (*loc, _("invalid escape sequence: %s"), quote (yytext));
-    else if (! c)
-      complain_at (*loc, _("invalid null character: %s"), quote (yytext));
+    if (!c || UCHAR_MAX < c)
+      complain_at (*loc, _("invalid number after \\-escape: %s"),
+                   yytext+1);
     else
       obstack_1grow (&obstack_for_string, c);
   }
@@ -482,16 +557,20 @@ splice	 (\\[ \f\t\v]*\n)*
 
   \\(u|U[0-9abcdefABCDEF]{4})[0-9abcdefABCDEF]{4} {
     int c = convert_ucn_to_byte (yytext);
-    if (c < 0)
-      complain_at (*loc, _("invalid escape sequence: %s"), quote (yytext));
-    else if (! c)
-      complain_at (*loc, _("invalid null character: %s"), quote (yytext));
+    if (c <= 0)
+      complain_at (*loc, _("invalid number after \\-escape: %s"),
+                   yytext+1);
     else
       obstack_1grow (&obstack_for_string, c);
   }
   \\(.|\n)	{
-    complain_at (*loc, _("unrecognized escape sequence: %s"), quote (yytext));
-    STRING_GROW;
+    char const *p = yytext + 1;
+    /* Quote only if escaping won't make the character visible.  */
+    if (c_isspace ((unsigned char) *p) && c_isprint ((unsigned char) *p))
+      p = quote (p);
+    else
+      p = quotearg_style_mem (escape_quoting_style, p, 1);
+    complain_at (*loc, _("invalid character after \\-escape: %s"), p);
   }
 }
 
@@ -501,7 +580,7 @@ splice	 (\\[ \f\t\v]*\n)*
 
 <SC_CHARACTER,SC_STRING>
 {
-  {splice}|\\{splice}[^\n$@\[\]]	STRING_GROW;
+  {splice}|\\{splice}[^\n\[\]]	STRING_GROW;
 }
 
 <SC_CHARACTER>
@@ -551,101 +630,42 @@ splice	 (\\[ \f\t\v]*\n)*
 }
 
 
-  /*---------------------------------------------------------------.
-  | Scanning after %union etc., possibly followed by white space.  |
-  | For %union only, allow arbitrary C code to appear before the   |
-  | following brace, as an extension to POSIX.			   |
-  `---------------------------------------------------------------*/
 
-<SC_PRE_CODE>
-{
-  . {
-    bool valid = yytext[0] == '{' || token_type == PERCENT_UNION;
-    scanner_cursor.column -= mbsnwidth (yytext, yyleng, 0);
-    yyless (0);
-
-    if (valid)
-      {
-	braces_level = -1;
-	code_start = loc->start;
-	BEGIN SC_BRACED_CODE;
-      }
-    else
-      {
-	complain_at (*loc, _("missing `{' in %s"),
-		     token_name (token_type));
-	obstack_sgrow (&obstack_for_string, "{}");
-	STRING_FINISH;
-	val->chars = last_string;
-	BEGIN INITIAL;
-	return token_type;
-      }
-  }
-
-  <<EOF>>  unexpected_eof (scanner_cursor, "{}"); BEGIN INITIAL;
-}
-
-
-  /*---------------------------------------------------------------.
-  | Scanning some code in braces (%union and actions). The initial |
-  | "{" is already eaten.                                          |
-  `---------------------------------------------------------------*/
+  /*-----------------------------------------------------------.
+  | Scanning some code in braces (actions). The initial "{" is |
+  | already eaten.                                             |
+  `-----------------------------------------------------------*/
 
 <SC_BRACED_CODE>
 {
   "{"|"<"{splice}"%"  STRING_GROW; braces_level++;
   "%"{splice}">"      STRING_GROW; braces_level--;
   "}" {
-    bool outer_brace = --braces_level < 0;
-
-    /* As an undocumented Bison extension, append `;' before the last
-       brace in braced code, so that the user code can omit trailing
-       `;'.  But do not append `;' if emulating Yacc, since Yacc does
-       not append one.
-
-       FIXME: Bison should warn if a semicolon seems to be necessary
-       here, and should omit the semicolon if it seems unnecessary
-       (e.g., after ';', '{', or '}', each followed by comments or
-       white space).  Such a warning shouldn't depend on --yacc; it
-       should depend on a new --pedantic option, which would cause
-       Bison to warn if it detects an extension to POSIX.  --pedantic
-       should also diagnose other Bison extensions like %yacc.
-       Perhaps there should also be a GCC-style --pedantic-errors
-       option, so that such warnings are diagnosed as errors.  */
-    if (outer_brace && token_type == BRACED_CODE && ! yacc_flag)
-      obstack_1grow (&obstack_for_string, ';');
-
     obstack_1grow (&obstack_for_string, '}');
 
-    if (outer_brace)
+    --braces_level;
+    if (braces_level < 0)
       {
 	STRING_FINISH;
 	loc->start = code_start;
-	val->chars = last_string;
-	increment_rule_length (*loc);
-	last_braced_code_loc = *loc;
+	val->code = last_string;
 	BEGIN INITIAL;
-	return token_type;
+	return BRACED_CODE;
       }
   }
 
-  /* Tokenize `<<%' correctly (as `<<' `%') rather than incorrrectly
-     (as `<' `<%').  */
+  /* Tokenize '<<%' correctly (as '<<' '%') rather than incorrrectly
+     (as '<' '<%').  */
   "<"{splice}"<"  STRING_GROW;
 
-  "$"("<"{tag}">")?(-?[0-9]+|"$")  handle_dollar (token_type, yytext, *loc);
-  "@"(-?[0-9]+|"$")		   handle_at (token_type, yytext, *loc);
-
-  "$"  {
-    warn_at (*loc, _("stray `$'"));
-    obstack_sgrow (&obstack_for_string, "$][");
+  <<EOF>> {
+    unexpected_eof (code_start, "}");
+    STRING_FINISH;
+    loc->start = code_start;
+    val->code = last_string;
+    BEGIN INITIAL;
+    return BRACED_CODE;
   }
-  "@"  {
-    warn_at (*loc, _("stray `@'"));
-    obstack_sgrow (&obstack_for_string, "@@");
-  }
-
-  <<EOF>>  unexpected_eof (code_start, "}"); BEGIN INITIAL;
 }
 
 
@@ -663,7 +683,14 @@ splice	 (\\[ \f\t\v]*\n)*
     return PROLOGUE;
   }
 
-  <<EOF>>  unexpected_eof (code_start, "%}"); BEGIN INITIAL;
+  <<EOF>> {
+    unexpected_eof (code_start, "%}");
+    STRING_FINISH;
+    loc->start = code_start;
+    val->chars = last_string;
+    BEGIN INITIAL;
+    return PROLOGUE;
+  }
 }
 
 
@@ -684,19 +711,6 @@ splice	 (\\[ \f\t\v]*\n)*
 }
 
 
-  /*-----------------------------------------.
-  | Escape M4 quoting characters in C code.  |
-  `-----------------------------------------*/
-
-<SC_COMMENT,SC_LINE_COMMENT,SC_STRING,SC_CHARACTER,SC_BRACED_CODE,SC_PROLOGUE,SC_EPILOGUE>
-{
-  \$	obstack_sgrow (&obstack_for_string, "$][");
-  \@	obstack_sgrow (&obstack_for_string, "@@");
-  \[	obstack_sgrow (&obstack_for_string, "@{");
-  \]	obstack_sgrow (&obstack_for_string, "@}");
-}
-
-
   /*-----------------------------------------------------.
   | By default, grow the string obstack with the input.  |
   `-----------------------------------------------------*/
@@ -705,79 +719,6 @@ splice	 (\\[ \f\t\v]*\n)*
 <SC_COMMENT,SC_LINE_COMMENT,SC_BRACED_CODE,SC_PROLOGUE,SC_EPILOGUE>\n	STRING_GROW;
 
 %%
-
-/* Keeps track of the maximum number of semantic values to the left of
-   a handle (those referenced by $0, $-1, etc.) are required by the
-   semantic actions of this grammar. */
-int max_left_semantic_context = 0;
-
-/* If BUF is null, add BUFSIZE (which in this case must be less than
-   INT_MAX) to COLUMN; otherwise, add mbsnwidth (BUF, BUFSIZE, 0) to
-   COLUMN.  If an overflow occurs, or might occur but is undetectable,
-   return INT_MAX.  Assume COLUMN is nonnegative.  */
-
-static inline int
-add_column_width (int column, char const *buf, size_t bufsize)
-{
-  size_t width;
-  unsigned int remaining_columns = INT_MAX - column;
-
-  if (buf)
-    {
-      if (INT_MAX / 2 <= bufsize)
-	return INT_MAX;
-      width = mbsnwidth (buf, bufsize, 0);
-    }
-  else
-    width = bufsize;
-
-  return width <= remaining_columns ? column + width : INT_MAX;
-}
-
-/* Set *LOC and adjust scanner cursor to account for token TOKEN of
-   size SIZE.  */
-
-static void
-adjust_location (location *loc, char const *token, size_t size)
-{
-  int line = scanner_cursor.line;
-  int column = scanner_cursor.column;
-  char const *p0 = token;
-  char const *p = token;
-  char const *lim = token + size;
-
-  loc->start = scanner_cursor;
-
-  for (p = token; p < lim; p++)
-    switch (*p)
-      {
-      case '\n':
-	line += line < INT_MAX;
-	column = 1;
-	p0 = p + 1;
-	break;
-
-      case '\t':
-	column = add_column_width (column, p0, p - p0);
-	column = add_column_width (column, NULL, 8 - ((column - 1) & 7));
-	p0 = p + 1;
-	break;
-
-      default:
-	break;
-      }
-
-  scanner_cursor.line = line;
-  scanner_cursor.column = column = add_column_width (column, p0, p - p0);
-
-  loc->end = scanner_cursor;
-
-  if (line == INT_MAX && loc->start.line != INT_MAX)
-    warn_at (*loc, _("line number overflow"));
-  if (column == INT_MAX && loc->start.column != INT_MAX)
-    warn_at (*loc, _("column number overflow"));
-}
-
 
 /* Read bytes from FP into buffer BUF of size SIZE.  Return the
    number of bytes read.  Remove '\r' from input, treating \r\n
@@ -825,173 +766,6 @@ no_cr_read (FILE *fp, char *buf, size_t size)
   return bytes_read;
 }
 
-
-/*------------------------------------------------------------------.
-| TEXT is pointing to a wannabee semantic value (i.e., a `$').      |
-|                                                                   |
-| Possible inputs: $[<TYPENAME>]($|integer)                         |
-|                                                                   |
-| Output to OBSTACK_FOR_STRING a reference to this semantic value.  |
-`------------------------------------------------------------------*/
-
-static inline bool
-handle_action_dollar (char *text, location loc)
-{
-  const char *type_name = NULL;
-  char *cp = text + 1;
-
-  if (! current_rule)
-    return false;
-
-  /* Get the type name if explicit. */
-  if (*cp == '<')
-    {
-      type_name = ++cp;
-      while (*cp != '>')
-	++cp;
-      *cp = '\0';
-      ++cp;
-    }
-
-  if (*cp == '$')
-    {
-      if (!type_name)
-	type_name = symbol_list_n_type_name_get (current_rule, loc, 0);
-      if (!type_name && typed)
-	complain_at (loc, _("$$ of `%s' has no declared type"),
-		     current_rule->sym->tag);
-      if (!type_name)
-	type_name = "";
-      obstack_fgrow1 (&obstack_for_string,
-		      "]b4_lhs_value([%s])[", type_name);
-      current_rule->used = true;
-    }
-  else
-    {
-      long int num = strtol (cp, NULL, 10);
-
-      if (1 - INT_MAX + rule_length <= num && num <= rule_length)
-	{
-	  int n = num;
-	  if (max_left_semantic_context < 1 - n)
-	    max_left_semantic_context = 1 - n;
-	  if (!type_name && 0 < n)
-	    type_name = symbol_list_n_type_name_get (current_rule, loc, n);
-	  if (!type_name && typed)
-	    complain_at (loc, _("$%d of `%s' has no declared type"),
-			 n, current_rule->sym->tag);
-	  if (!type_name)
-	    type_name = "";
-	  obstack_fgrow3 (&obstack_for_string,
-			  "]b4_rhs_value(%d, %d, [%s])[",
-			  rule_length, n, type_name);
-	  symbol_list_n_used_set (current_rule, n, true);
-	}
-      else
-	complain_at (loc, _("integer out of range: %s"), quote (text));
-    }
-
-  return true;
-}
-
-
-/*----------------------------------------------------------------.
-| Map `$?' onto the proper M4 symbol, depending on its TOKEN_TYPE |
-| (are we in an action?).                                         |
-`----------------------------------------------------------------*/
-
-static void
-handle_dollar (int token_type, char *text, location loc)
-{
-  switch (token_type)
-    {
-    case BRACED_CODE:
-      if (handle_action_dollar (text, loc))
-	return;
-      break;
-
-    case PERCENT_DESTRUCTOR:
-    case PERCENT_INITIAL_ACTION:
-    case PERCENT_PRINTER:
-      if (text[1] == '$')
-	{
-	  obstack_sgrow (&obstack_for_string, "]b4_dollar_dollar[");
-	  return;
-	}
-      break;
-
-    default:
-      break;
-    }
-
-  complain_at (loc, _("invalid value: %s"), quote (text));
-}
-
-
-/*------------------------------------------------------.
-| TEXT is a location token (i.e., a `@...').  Output to |
-| OBSTACK_FOR_STRING a reference to this location.      |
-`------------------------------------------------------*/
-
-static inline bool
-handle_action_at (char *text, location loc)
-{
-  char *cp = text + 1;
-  locations_flag = true;
-
-  if (! current_rule)
-    return false;
-
-  if (*cp == '$')
-    obstack_sgrow (&obstack_for_string, "]b4_lhs_location[");
-  else
-    {
-      long int num = strtol (cp, NULL, 10);
-
-      if (1 - INT_MAX + rule_length <= num && num <= rule_length)
-	{
-	  int n = num;
-	  obstack_fgrow2 (&obstack_for_string, "]b4_rhs_location(%d, %d)[",
-			  rule_length, n);
-	}
-      else
-	complain_at (loc, _("integer out of range: %s"), quote (text));
-    }
-
-  return true;
-}
-
-
-/*----------------------------------------------------------------.
-| Map `@?' onto the proper M4 symbol, depending on its TOKEN_TYPE |
-| (are we in an action?).                                         |
-`----------------------------------------------------------------*/
-
-static void
-handle_at (int token_type, char *text, location loc)
-{
-  switch (token_type)
-    {
-    case BRACED_CODE:
-      handle_action_at (text, loc);
-      return;
-
-    case PERCENT_INITIAL_ACTION:
-    case PERCENT_DESTRUCTOR:
-    case PERCENT_PRINTER:
-      if (text[1] == '$')
-	{
-	  obstack_sgrow (&obstack_for_string, "]b4_at_dollar[");
-	  return;
-	}
-      break;
-
-    default:
-      break;
-    }
-
-  complain_at (loc, _("invalid value: %s"), quote (text));
-}
 
 
 /*------------------------------------------------------.
@@ -1071,36 +845,28 @@ convert_ucn_to_byte (char const *ucn)
 }
 
 
-/*----------------------------------------------------------------.
-| Handle `#line INT "FILE"'.  ARGS has already skipped `#line '.  |
-`----------------------------------------------------------------*/
+/*---------------------------------------------------------------------.
+| Handle '#line INT( "FILE")?\n'.  ARGS has already skipped '#line '.  |
+`---------------------------------------------------------------------*/
 
 static void
 handle_syncline (char *args, location loc)
 {
-  char *after_num;
-  unsigned long int lineno = strtoul (args, &after_num, 10);
-  char *file = strchr (after_num, '"') + 1;
-  *strchr (file, '"') = '\0';
+  char *file;
+  unsigned long int lineno = strtoul (args, &file, 10);
   if (INT_MAX <= lineno)
     {
       warn_at (loc, _("line number overflow"));
       lineno = INT_MAX;
     }
-  scanner_cursor.file = current_file = uniqstr_new (file);
-  scanner_cursor.line = lineno;
-  scanner_cursor.column = 1;
-}
 
-
-/*---------------------------------.
-| Report a rule that is too long.  |
-`---------------------------------*/
-
-static void
-rule_length_overflow (location loc)
-{
-  fatal_at (loc, _("rule is too long"));
+  file = mbschr (file, '"');
+  if (file)
+    {
+      *mbschr (file + 1, '"') = '\0';
+      current_file = uniqstr_new (file + 1);
+    }
+  boundary_set (&scanner_cursor, current_file, lineno, 1);
 }
 
 
@@ -1116,6 +882,10 @@ unexpected_end (boundary start, char const *msgid, char const *token_end)
   location loc;
   loc.start = start;
   loc.end = scanner_cursor;
+  token_end = quote (token_end);
+  /* Instead of '\'', display "'".  */
+  if (!strcmp (token_end, "'\\''"))
+    token_end = "\"'\"";
   complain_at (loc, _(msgid), token_end);
 }
 
@@ -1128,7 +898,7 @@ unexpected_end (boundary start, char const *msgid, char const *token_end)
 static void
 unexpected_eof (boundary start, char const *token_end)
 {
-  unexpected_end (start, N_("missing `%s' at end of file"), token_end);
+  unexpected_end (start, N_("missing %s at end of file"), token_end);
 }
 
 
@@ -1139,7 +909,7 @@ unexpected_eof (boundary start, char const *token_end)
 static void
 unexpected_newline (boundary start, char const *token_end)
 {
-  unexpected_end (start, N_("missing `%s' at end of line"), token_end);
+  unexpected_end (start, N_("missing %s at end of line"), token_end);
 }
 
 
@@ -1148,7 +918,7 @@ unexpected_newline (boundary start, char const *token_end)
 `-------------------------*/
 
 void
-scanner_initialize (void)
+gram_scanner_initialize (void)
 {
   obstack_init (&obstack_for_string);
 }
@@ -1159,9 +929,9 @@ scanner_initialize (void)
 `-----------------------------------------------*/
 
 void
-scanner_free (void)
+gram_scanner_free (void)
 {
   obstack_free (&obstack_for_string, 0);
   /* Reclaim Flex's buffers.  */
-  yy_delete_buffer (YY_CURRENT_BUFFER);
+  yylex_destroy ();
 }

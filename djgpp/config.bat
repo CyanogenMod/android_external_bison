@@ -4,21 +4,20 @@ Rem Configure Bison for DJGPP.
 Rem WARNING WARNING WARNING: This file needs to have DOS CRLF end-of-line
 Rem format, or else stock DOS/Windows shells will refuse to run it.
 
-Rem Copyright (C) 2005, 2006 Free Software Foundation, Inc.
+Rem Copyright (C) 2005-2012 Free Software Foundation, Inc.
 
-Rem This program is free software; you can redistribute it and/or modify
+Rem This program is free software: you can redistribute it and/or modify
 Rem it under the terms of the GNU General Public License as published by
-Rem the Free Software Foundation; either version 2, or (at your option)
-Rem any later version.
-
+Rem the Free Software Foundation, either version 3 of the License, or
+Rem (at your option) any later version.
+Rem
 Rem This program is distributed in the hope that it will be useful,
 Rem but WITHOUT ANY WARRANTY; without even the implied warranty of
 Rem MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 Rem GNU General Public License for more details.
-
+Rem
 Rem You should have received a copy of the GNU General Public License
-Rem along with this program; if not, write to the Free Software Foundation,
-Rem Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+Rem along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 echo Configuring Bison for DJGPP v2.x...
 
@@ -143,17 +142,17 @@ shift
 if not "%1" == "" goto ArgLoop
 
 Rem Create an arguments file for the configure script.
-echo --srcdir=%XSRC% > arguments
-if "%CACHING%" == "enabled"              echo --cache-file=%XSRC%/djgpp/config.cache >> arguments
-if "%DEPENDENCY_TRACKING%" == "enabled"  echo --enable-dependency-tracking >> arguments
-if "%DEPENDENCY_TRACKING%" == "disabled" echo --disable-dependency-tracking >> arguments
-if "%LIBICONV_PREFIX%" == "enabled"      echo --with-libiconv-prefix >> arguments
-if "%LIBICONV_PREFIX%" == "disabled"     echo --without-libiconv-prefix >> arguments
-if "%LIBINTL_PREFIX%" == "enabled"       echo --with-libintl-prefix >> arguments
-if "%LIBINTL_PREFIX%" == "disabled"      echo --without-libintl-prefix >> arguments
-if "%HTML%" == "enabled"                 echo --enable-html >> arguments
-if "%HTML%" == "disabled"                echo --disable-html >> arguments
-if not "%ARGS%" == ""                    echo %ARGS% >> arguments
+echo --srcdir=%XSRC% > args
+if "%CACHING%" == "enabled"              echo --cache-file=%XSRC%/djgpp/config.cache >> args
+if "%DEPENDENCY_TRACKING%" == "enabled"  echo --enable-dependency-tracking >> args
+if "%DEPENDENCY_TRACKING%" == "disabled" echo --disable-dependency-tracking >> args
+if "%LIBICONV_PREFIX%" == "enabled"      echo --with-libiconv-prefix >> args
+if "%LIBICONV_PREFIX%" == "disabled"     echo --without-libiconv-prefix >> args
+if "%LIBINTL_PREFIX%" == "enabled"       echo --with-libintl-prefix >> args
+if "%LIBINTL_PREFIX%" == "disabled"      echo --without-libintl-prefix >> args
+if "%HTML%" == "enabled"                 echo --enable-html >> args
+if "%HTML%" == "disabled"                echo --disable-html >> args
+if not "%ARGS%" == ""                    echo %ARGS% >> args
 set ARGS=
 set CACHING=
 set DEPENDENCY_TRACKING=
@@ -164,21 +163,25 @@ set HTML=
 if "%XSRC%" == "." goto InPlace
 
 :NotInPlace
-redir -e /dev/null update %XSRC%/configure.orig ./configure
+redir -e /dev/null update %XSRC%/configure.org ./configure
 test -f ./configure
 if errorlevel 1 update %XSRC%/configure ./configure
 
 :InPlace
 Rem Update configuration files
 echo Updating configuration scripts...
-test -f ./configure.orig
-if errorlevel 1 update configure configure.orig
-sed -f %XSRC%/djgpp/config.sed configure.orig > configure
+test -f ./configure.org
+if errorlevel 1 update configure configure.org
+sed -f %XSRC%/djgpp/config.sed configure.org > configure
 if errorlevel 1 goto SedError
 
 Rem Make sure they have a config.site file
 set CONFIG_SITE=%XSRC%/djgpp/config.site
 if not "%CONFIG_SITE%" == "%XSRC%/djgpp/config.site" goto SmallEnv
+
+Rem inttypes_.h and inttypes.h map to the same 8.3 alias.
+test -f %XSRC%/lib/inttypes_.h
+if not errorlevel 1 mv -f %XSRC%/lib/inttypes_.h %XSRC%/lib/_inttypes.h
 
 Rem Make sure crucial file names are not munged by unpacking
 test -f %XSRC%/po/Makefile.in.in
@@ -205,6 +208,51 @@ test -f %XSRC%/data/c++.m4
 if not errorlevel 1 mv -f %XSRC%/data/c++.m4 %XSRC%/data/cxx.m4
 test -f %XSRC%/data/cxx.m4
 if errorlevel 1 mv -f %XSRC%/data/cpp.m4 %XSRC%/data/cxx.m4
+test -f %XSRC%/data/c++-skel.m4
+if not errorlevel 1 mv -f %XSRC%/data/c++-skel.m4 %XSRC%/data/cxx-skel.m4
+test -f %XSRC%/data/cxx-skel.m4
+if errorlevel 1 mv -f %XSRC%/data/cpp-skel.m4 %XSRC%/data/cxx-skel.m4
+test -f %XSRC%/build-aux/javacomp.sh.in
+if not errorlevel 1 mv -f %XSRC%/build-aux/javacomp.sh.in %XSRC%/build-aux/javacomp.sh-in
+test -f %XSRC%/build-aux/javacomp.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javacomp.sh %XSRC%/build-aux/javacomp.sh-in
+test -f %XSRC%/build-aux/javacomp.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javacomp.shin %XSRC%/build-aux/javacomp.sh-in
+test -f %XSRC%/build-aux/javacomp.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javacomp.sh_in %XSRC%/build-aux/javacomp.sh-in
+test -f %XSRC%/build-aux/javacomp.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javacomp.sh.in %XSRC%/build-aux/javacomp.sh-in
+test -f %XSRC%/build-aux/javaexec.sh.in
+if not errorlevel 1 mv -f %XSRC%/build-aux/javaexec.sh.in %XSRC%/build-aux/javaexec.sh-in
+test -f %XSRC%/build-aux/javaexec.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javaexec.sh %XSRC%/build-aux/javaexec.sh-in
+test -f %XSRC%/build-aux/javaexec.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javaexec.shin %XSRC%/build-aux/javaexec.sh-in
+test -f %XSRC%/build-aux/javaexec.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javaexec.sh_in %XSRC%/build-aux/javaexec.sh-in
+test -f %XSRC%/build-aux/javaexec.sh-in
+if errorlevel 1 mv -f %XSRC%/build-aux/javaexec_sh.in %XSRC%/build-aux/javaexec.sh-in
+test -f %XSRC%/doc/yacc.1.in
+if not errorlevel 1 mv -f %XSRC%/doc/yacc.1.in %XSRC%/doc/yacc.1-in
+test -f %XSRC%/doc/yacc.1-in
+if errorlevel 1 mv -f %XSRC%/doc/yacc.1 %XSRC%/doc/yacc.1-in
+test -f %XSRC%/doc/yacc.1-in
+if errorlevel 1 mv -f %XSRC%/doc/yacc.1in %XSRC%/doc/yacc.1-in
+test -f %XSRC%/doc/yacc.1-in
+if errorlevel 1 mv -f %XSRC%/doc/yacc.1_in %XSRC%/doc/yacc.1-in
+test -f %XSRC%/doc/yacc.1-in
+if errorlevel 1 mv -f %XSRC%/doc/yacc_1.in %XSRC%/doc/yacc.1-in
+test -f %XSRC%/etc/bench.pl.in
+if not errorlevel 1 mv -f %XSRC%/etc/bench.pl.in %XSRC%/etc/bench.pl-in
+test -f %XSRC%/etc/bench.pl-in
+if errorlevel 1 mv -f %XSRC%/etc/bench.pl %XSRC%/etc/bench.pl-in
+test -f %XSRC%/etc/bench.pl-in
+if errorlevel 1 mv -f %XSRC%/etc/bench.plin %XSRC%/etc/bench.pl-in
+test -f %XSRC%/etc/bench.pl-in
+if errorlevel 1 mv -f %XSRC%/etc/bench.pl_in %XSRC%/etc/bench.pl-in
+test -f %XSRC%/etc/bench.pl-in
+if errorlevel 1 mv -f %XSRC%/etc/bench_pl.in %XSRC%/etc/bench.pl-in
+
 :scan_gram_c_Test
 test -f %XSRC%/src/c-scan-gram.c
 if not errorlevel 1 goto scan_skel_c_Test
@@ -222,24 +270,35 @@ sed "s/c++\.m4/cxx.m4/" %XSRC%/data/lalr1.cc > lalr1.cc
 if errorlevel 1 goto lalr1_ccFileError
 mv ./lalr1.cc %XSRC%/data/lalr1.cc
 sed "s/c++\.m4/cxx.m4/" %XSRC%/data/location.cc > location.cc
-if errorlevel 1 goto location.ccFileError
+if errorlevel 1 goto location_ccFileError
 mv ./location.cc %XSRC%/data/location.cc
 sed "s/c++\.m4/cxx.m4/" %XSRC%/data/glr.cc > glr.cc
-if errorlevel 1 goto glr.ccFileError
+if errorlevel 1 goto glr_ccFileError
 mv ./glr.cc %XSRC%/data/glr.cc
+
+Rem Fix src/getargs.c to reflect the renaming of c++-skel.m4
+sed "s/c++-skel\.m4/cxx-skel.m4/" %XSRC%/src/getargs.c > getargs.c
+if errorlevel 1 goto getargs_cFileError
+mv ./getargs.c %XSRC%/src/getargs.c
 
 Rem Define DJGPP specific defs in config.hin
 echo Editing config.hin...
-test -f %XSRC%/config_h.orig
-if errorlevel 1 update %XSRC%/config.hin %XSRC%/config_h.orig
-sed -f %XSRC%/djgpp/config_h.sed %XSRC%/config_h.orig > config.hin
+test -f %XSRC%/lib/config_h.org
+if errorlevel 1 update %XSRC%/lib/config.hin %XSRC%/lib/config_h.org
+sed -f %XSRC%/djgpp/config_h.sed %XSRC%/lib/config_h.org > config.hin
 if errorlevel 1 goto SedError2
-mv -f config.hin %XSRC%/config.hin
+mv -f config.hin %XSRC%/lib/config.hin
 
 
 Rem Fixing ilicit testsuite file name.
 test -f %XSRC%/tests/c++.at
 if not errorlevel 1 mv -f %XSRC%/tests/c++.at %XSRC%/tests/cxx.at
+
+test -f %XSRC%/tests/testsuite.org
+if errorlevel 1 update %XSRC%/tests/testsuite %XSRC%/tests/testsuite.org
+sed -f %XSRC%/djgpp/testsuite.sed %XSRC%/tests/testsuite.org > testsuite.tmp
+if errorlevel 1 goto SedError3
+mv -f ./testsuite.tmp %XSRC%/tests/testsuite
 
 Rem Fixing ilicit calc++ file names in the calc++ directory.
 test -d %XSRC%/examples/calc++
@@ -412,21 +471,21 @@ redir -e /dev/null rm %XSRC%/po/stamp-cat-id
 
 Rem Update the arguments file for the configure script.
 Rem We prefer without-included-gettext because libintl.a from gettext package
-Rem is the only one that is garanteed to have been ported to DJGPP.
-echo --enable-nls --without-included-gettext >> arguments
+Rem is the only one that is guaranteed to have been ported to DJGPP.
+echo --enable-nls --without-included-gettext >> args
 goto ConfigurePackage
 
 :MissingNLSTools
 echo Needed libs/tools for NLS not found. Configuring without NLS.
 :WithoutNLS
 Rem Update the arguments file for the configure script.
-echo --disable-nls >> arguments
+echo --disable-nls >> args
 
 :ConfigurePackage
 echo Running the ./configure script...
-sh ./configure @arguments
+sh ./configure @args
 if errorlevel 1 goto CfgError
-rm arguments
+rm args
 echo Done.
 goto End
 
@@ -436,6 +495,10 @@ goto End
 
 :glr_ccFileError
 echo ./data/glr.cc file editing failed!
+goto End
+
+:getargs_cFileError
+echo ./src/getargs.c file editing failed!
 goto End
 
 :location_ccFileError
@@ -455,7 +518,11 @@ echo ./configure script editing failed!
 goto End
 
 :SedError2
-echo ./config.hin editing failed!
+echo ./lib/config.hin editing failed!
+goto End
+
+:SedError3
+echo ./tests/testsuite editing failed!
 goto End
 
 :CfgError

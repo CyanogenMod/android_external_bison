@@ -1,11 +1,12 @@
 /*  Take file names apart into directory and base names.
 
-    Copyright (C) 1998, 2001, 2003, 2004, 2005 Free Software Foundation, Inc.
+    Copyright (C) 1998, 2001, 2003-2006, 2009-2012 Free Software Foundation,
+    Inc.
 
-    This program is free software; you can redistribute it and/or modify
+    This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2, or (at your option)
-    any later version.
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,34 +14,32 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software Foundation,
-    Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #ifndef DIRNAME_H_
 # define DIRNAME_H_ 1
 
 # include <stdbool.h>
 # include <stddef.h>
+# include "dosname.h"
 
 # ifndef DIRECTORY_SEPARATOR
 #  define DIRECTORY_SEPARATOR '/'
 # endif
 
-# ifndef ISSLASH
-#  define ISSLASH(C) ((C) == DIRECTORY_SEPARATOR)
+# ifndef DOUBLE_SLASH_IS_DISTINCT_ROOT
+#  define DOUBLE_SLASH_IS_DISTINCT_ROOT 0
 # endif
 
-# ifndef FILE_SYSTEM_PREFIX_LEN
-#  define FILE_SYSTEM_PREFIX_LEN(File_name) 0
-# endif
-
-# define IS_ABSOLUTE_FILE_NAME(F) ISSLASH ((F)[FILE_SYSTEM_PREFIX_LEN (F)])
-# define IS_RELATIVE_FILE_NAME(F) (! IS_ABSOLUTE_FILE_NAME (F))
-
+# if GNULIB_DIRNAME
 char *base_name (char const *file);
 char *dir_name (char const *file);
-size_t base_len (char const *file);
-size_t dir_len (char const *file);
+# endif
+
+char *mdir_name (char const *file);
+size_t base_len (char const *file) _GL_ATTRIBUTE_PURE;
+size_t dir_len (char const *file) _GL_ATTRIBUTE_PURE;
+char *last_component (char const *file) _GL_ATTRIBUTE_PURE;
 
 bool strip_trailing_slashes (char *file);
 

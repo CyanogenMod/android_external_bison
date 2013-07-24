@@ -1,24 +1,22 @@
-/* Type definitions for nondeterministic finite state machine for Bison.
+/* Type definitions for the finite state machine for Bison.
 
-   Copyright (C) 1984, 1989, 2000, 2001, 2002, 2003, 2004 Free
-   Software Foundation, Inc.
+   Copyright (C) 1984, 1989, 2000-2004, 2007, 2009-2012 Free Software
+   Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 
 /* These type definitions are used to represent a nondeterministic
@@ -44,13 +42,13 @@
    ACCESSING_SYMBOL of the core.
 
    Each core contains a vector of NITEMS items which are the indices
-   in the RITEMS vector of the items that are selected in this state.
+   in the RITEM vector of the items that are selected in this state.
 
-   The two types of actions are shifts/gotos (push the look-ahead token
+   The two types of actions are shifts/gotos (push the lookahead token
    and read another/goto to the state designated by a nterm) and
    reductions (combine the last n things on the stack via a rule,
    replace them with the symbol that the rule derives, and leave the
-   look-ahead token alone).  When the states are generated, these
+   lookahead token alone).  When the states are generated, these
    actions are represented in two other lists.
 
    Each transition structure describes the possible transitions out
@@ -63,9 +61,8 @@
    deletes transitions by having them point to zero.
 
    Each reductions structure describes the possible reductions at the
-   state whose number is in the number field.  The data is a list of
-   nreds rules, represented by their rule numbers.  first_reduction
-   points to the list of these structures.
+   state whose number is in the number field.  rules is an array of
+   num rules.  lookahead_tokens is an array of bitsets, one per rule.
 
    Conflict resolution can decide that certain tokens in certain
    states should explicitly be errors (for implementing %nonassoc).
@@ -185,7 +182,8 @@ errs *errs_new (int num, symbol **tokens);
 typedef struct
 {
   int num;
-  bitset *look_ahead_tokens;
+  bitset *lookahead_tokens;
+  /* Sorted ascendingly on rule number.  */
   rule *rules[1];
 } reductions;
 
@@ -195,6 +193,8 @@ typedef struct
 | states.  |
 `---------*/
 
+struct state_list;
+
 struct state
 {
   state_number number;
@@ -203,15 +203,22 @@ struct state
   reductions *reductions;
   errs *errs;
 
-  /* Nonzero if no look-ahead is needed to decide what to do in state S.  */
+  /* When an includer (such as ielr.c) needs to store states in a list, the
+     includer can define struct state_list as the list node structure and can
+     store in this member a reference to the node containing each state.  */
+  struct state_list *state_list;
+
+  /* If non-zero, then no lookahead sets on reduce actions are needed to
+     decide what to do in state S.  */
   char consistent;
 
   /* If some conflicts were solved thanks to precedence/associativity,
      a human readable description of the resolution.  */
   const char *solved_conflicts;
+  const char *solved_conflicts_xml;
 
-  /* Its items.  Must be last, since ITEMS can be arbitrarily large.
-     */
+  /* Its items.  Must be last, since ITEMS can be arbitrarily large.  Sorted
+     ascendingly on item index in RITEM, which is sorted on rule number.  */
   size_t nitems;
   item_number items[1];
 };
@@ -222,6 +229,7 @@ extern state *final_state;
 /* Create a new state with ACCESSING_SYMBOL for those items.  */
 state *state_new (symbol_number accessing_symbol,
 		  size_t core_size, item_number *core);
+state *state_new_isocore (state const *s);
 
 /* Set the transitions of STATE.  */
 void state_transitions_set (state *s, int num, state **trans);
@@ -234,9 +242,11 @@ int state_reduction_find (state *s, rule *r);
 /* Set the errs of STATE.  */
 void state_errs_set (state *s, int num, symbol **errors);
 
-/* Print on OUT all the look-ahead tokens such that this STATE wants to
+/* Print on OUT all the lookahead tokens such that this STATE wants to
    reduce R.  */
-void state_rule_look_ahead_tokens_print (state *s, rule *r, FILE *out);
+void state_rule_lookahead_tokens_print (state *s, rule *r, FILE *out);
+void state_rule_lookahead_tokens_print_xml (state *s, rule *r,
+					    FILE *out, int level);
 
 /* Create/destroy the states hash table.  */
 void state_hash_new (void);
@@ -249,9 +259,16 @@ state *state_hash_lookup (size_t core_size, item_number *core);
 /* Insert STATE in the state hash table.  */
 void state_hash_insert (state *s);
 
+/* Remove unreachable states, renumber remaining states, update NSTATES, and
+   write to OLD_TO_NEW a mapping of old state numbers to new state numbers such
+   that the old value of NSTATES is written as the new state number for removed
+   states.  The size of OLD_TO_NEW must be the old value of NSTATES.  */
+void state_remove_unreachable_states (state_number old_to_new[]);
+
 /* All the states, indexed by the state number.  */
 extern state **states;
 
 /* Free all the states.  */
 void states_free (void);
+
 #endif /* !STATE_H_ */

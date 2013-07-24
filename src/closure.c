@@ -1,24 +1,22 @@
 /* Closures for Bison
 
-   Copyright (C) 1984, 1989, 2000, 2001, 2002, 2004, 2005 Free
+   Copyright (C) 1984, 1989, 2000-2002, 2004-2005, 2007, 2009-2012 Free
    Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify it
-   under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful, but
-   WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-   General Public License for more details.
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to the Free
-   Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
-   02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
 #include "system.h"
@@ -26,7 +24,6 @@
 #include <bitset.h>
 #include <bitsetv-print.h>
 #include <bitsetv.h>
-#include <quotearg.h>
 
 #include "closure.h"
 #include "derives.h"
@@ -37,7 +34,7 @@
 
 /* NITEMSET is the size of the array ITEMSET.  */
 item_number *itemset;
-size_t nritemset;
+size_t nitemset;
 
 static bitset ruleset;
 
@@ -213,30 +210,32 @@ closure (item_number *core, size_t n)
     if (ISVAR (ritem[core[c]]))
       bitset_or (ruleset, ruleset, FDERIVES (ritem[core[c]]));
 
-  nritemset = 0;
+  /* core is sorted on item index in ritem, which is sorted on rule number.
+     Compute itemset with the same sort.  */
+  nitemset = 0;
   c = 0;
   BITSET_FOR_EACH (iter, ruleset, ruleno, 0)
     {
       item_number itemno = rules[ruleno].rhs - ritem;
       while (c < n && core[c] < itemno)
 	{
-	  itemset[nritemset] = core[c];
-	  nritemset++;
+	  itemset[nitemset] = core[c];
+	  nitemset++;
 	  c++;
 	}
-      itemset[nritemset] = itemno;
-      nritemset++;
+      itemset[nitemset] = itemno;
+      nitemset++;
     };
 
   while (c < n)
     {
-      itemset[nritemset] = core[c];
-      nritemset++;
+      itemset[nitemset] = core[c];
+      nitemset++;
       c++;
     }
 
   if (trace_flag & trace_sets)
-    print_closure ("output", itemset, nritemset);
+    print_closure ("output", itemset, nitemset);
 }
 
 

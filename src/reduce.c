@@ -1,24 +1,22 @@
 /* Grammar reduction for Bison.
 
-   Copyright (C) 1988, 1989, 2000, 2001, 2002, 2003, 2005, 2006 Free
-   Software Foundation, Inc.
+   Copyright (C) 1988-1989, 2000-2003, 2005-2012 Free Software
+   Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 
 /* Reduce the grammar: Find and eliminate unreachable terminals,
@@ -31,12 +29,12 @@
 #include "system.h"
 
 #include <bitset.h>
-#include <quotearg.h>
 
 #include "complain.h"
 #include "files.h"
 #include "getargs.h"
 #include "gram.h"
+#include "print-xml.h"
 #include "reader.h"
 #include "reduce.h"
 #include "symtab.h"
@@ -240,7 +238,7 @@ reduce_grammar_tables (void)
     rule_number r;
     for (r = 0; r < nrules; r++)
       rules[r].useful = bitset_test (P, r);
-    grammar_rules_never_reduced_report (_("useless rule"));
+    grammar_rules_useless_report (_("rule useless in grammar"));
   }
 
   /* Map the nonterminals to their new index: useful first, useless
@@ -301,7 +299,7 @@ nonterminals_reduce (void)
     if (!bitset_test (V, i))
       {
 	nontermmap[i - ntokens] = n++;
-	warn_at (symbols[i]->location, _("useless nonterminal: %s"),
+	warn_at (symbols[i]->location, _("nonterminal useless in grammar: %s"),
 		 symbols[i]->tag);
       }
 
@@ -349,7 +347,7 @@ reduce_output (FILE *out)
   if (nuseless_nonterminals > 0)
     {
       int i;
-      fprintf (out, "%s\n\n", _("Useless nonterminals"));
+      fprintf (out, "%s\n\n", _("Nonterminals useless in grammar"));
       for (i = 0; i < nuseless_nonterminals; ++i)
 	fprintf (out, "   %s\n", symbols[nsyms + i]->tag);
       fputs ("\n\n", out);
@@ -359,10 +357,10 @@ reduce_output (FILE *out)
     bool b = false;
     int i;
     for (i = 0; i < ntokens; i++)
-      if (!bitset_test (V, i) && !bitset_test (V1, i))
+      if (reduce_token_unused_in_grammar (i))
 	{
 	  if (!b)
-	    fprintf (out, "%s\n\n", _("Terminals which are not used"));
+	    fprintf (out, "%s\n\n", _("Terminals unused in grammar"));
 	  b = true;
 	  fprintf (out, "   %s\n", symbols[i]->tag);
 	}
@@ -371,13 +369,10 @@ reduce_output (FILE *out)
   }
 
   if (nuseless_productions > 0)
-    grammar_rules_partial_print (out, _("Useless rules"),
-				 rule_useless_p);
+    grammar_rules_partial_print (out, _("Rules useless in grammar"),
+				 rule_useless_in_grammar_p);
 }
 
-
-
-
 
 /*-------------------------------.
 | Report the results to STDERR.  |
@@ -386,29 +381,16 @@ reduce_output (FILE *out)
 static void
 reduce_print (void)
 {
-  if (yacc_flag && nuseless_productions)
-    fprintf (stderr, ngettext ("%d rule never reduced\n",
-			       "%d rules never reduced\n",
-			       nuseless_productions),
-	     nuseless_productions);
-
-  fprintf (stderr, "%s: %s: ", grammar_file, _("warning"));
-
   if (nuseless_nonterminals > 0)
-    fprintf (stderr, ngettext ("%d useless nonterminal",
-			       "%d useless nonterminals",
-			       nuseless_nonterminals),
-	     nuseless_nonterminals);
-
-  if (nuseless_nonterminals > 0 && nuseless_productions > 0)
-    fprintf (stderr, _(" and "));
-
+    warn (ngettext ("%d nonterminal useless in grammar",
+                    "%d nonterminals useless in grammar",
+                    nuseless_nonterminals),
+          nuseless_nonterminals);
   if (nuseless_productions > 0)
-    fprintf (stderr, ngettext ("%d useless rule",
-			       "%d useless rules",
-			       nuseless_productions),
-	     nuseless_productions);
-  fprintf (stderr, "\n");
+    warn (ngettext ("%d rule useless in grammar",
+                    "%d rules useless in grammar",
+                    nuseless_productions),
+          nuseless_productions);
 }
 
 void
@@ -455,6 +437,19 @@ reduce_grammar (void)
     }
 }
 
+bool
+reduce_token_unused_in_grammar (symbol_number i)
+{
+  aver (i < ntokens);
+  return !bitset_test (V, i) && !bitset_test (V1, i);
+}
+
+bool
+reduce_nonterminal_useless_in_grammar (symbol_number i)
+{
+  aver (ntokens <= i && i < nsyms + nuseless_nonterminals);
+  return nsyms <= i;
+}
 
 /*-----------------------------------------------------------.
 | Free the global sets used to compute the reduced grammar.  |

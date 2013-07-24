@@ -1,30 +1,27 @@
 /* Print information on generated parser, for bison,
 
-   Copyright (C) 1984, 1986, 1989, 2000, 2001, 2002, 2003, 2004, 2005
-   Free Software Foundation, Inc.
+   Copyright (C) 1984, 1986, 1989, 2000-2005, 2007, 2009-2012 Free
+   Software Foundation, Inc.
 
    This file is part of Bison, the GNU Compiler Compiler.
 
-   Bison is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
-   Bison is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with Bison; see the file COPYING.  If not, write to
-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include <config.h>
 #include "system.h"
 
 #include <bitset.h>
-#include <quotearg.h>
 
 #include "LR0.h"
 #include "closure.h"
@@ -33,14 +30,15 @@
 #include "getargs.h"
 #include "gram.h"
 #include "lalr.h"
+#include "muscle-tab.h"
 #include "print.h"
 #include "reader.h"
 #include "reduce.h"
 #include "state.h"
 #include "symtab.h"
+#include "tables.h"
 
-static bitset shift_set;
-static bitset look_ahead_set;
+static bitset no_reduce_set;
 
 #if 0
 static void
@@ -81,7 +79,7 @@ print_core (FILE *out, state *s)
     {
       closure (sitems, snritems);
       sitems = itemset;
-      snritems = nritemset;
+      snritems = nitemset;
     }
 
   if (!snritems)
@@ -111,9 +109,10 @@ print_core (FILE *out, state *s)
       for (/* Nothing */; *sp >= 0; ++sp)
 	fprintf (out, " %s", symbols[*sp]->tag);
 
-      /* Display the look-ahead tokens?  */
-      if (report_flag & report_look_ahead_tokens)
-	state_rule_look_ahead_tokens_print (s, &rules[r], out);
+      /* Display the lookahead tokens?  */
+      if (report_flag & report_lookahead_tokens
+          && item_number_is_rule_number (*sp1))
+	state_rule_lookahead_tokens_print (s, &rules[r], out);
 
       fputc ('\n', out);
     }
@@ -132,7 +131,7 @@ print_transitions (state *s, FILE *out, bool display_transitions_p)
   size_t width = 0;
   int i;
 
-  /* Compute the width of the look-ahead token column.  */
+  /* Compute the width of the lookahead token column.  */
   for (i = 0; i < trans->num; i++)
     if (!TRANSITION_IS_DISABLED (trans, i)
 	&& TRANSITION_IS_SHIFT (trans, i) == display_transitions_p)
@@ -148,7 +147,7 @@ print_transitions (state *s, FILE *out, bool display_transitions_p)
   fputc ('\n', out);
   width += 2;
 
-  /* Report look-ahead tokens and shifts.  */
+  /* Report lookahead tokens and shifts.  */
   for (i = 0; i < trans->num; i++)
     if (!TRANSITION_IS_DISABLED (trans, i)
 	&& TRANSITION_IS_SHIFT (trans, i) == display_transitions_p)
@@ -180,7 +179,7 @@ print_errs (FILE *out, state *s)
   size_t width = 0;
   int i;
 
-  /* Compute the width of the look-ahead token column.  */
+  /* Compute the width of the lookahead token column.  */
   for (i = 0; i < errp->num; ++i)
     if (errp->symbols[i])
       max_length (&width, errp->symbols[i]->tag);
@@ -192,7 +191,7 @@ print_errs (FILE *out, state *s)
   fputc ('\n', out);
   width += 2;
 
-  /* Report look-ahead tokens and errors.  */
+  /* Report lookahead tokens and errors.  */
   for (i = 0; i < errp->num; ++i)
     if (errp->symbols[i])
       {
@@ -206,85 +205,20 @@ print_errs (FILE *out, state *s)
 }
 
 
-/*-------------------------------------------------------------.
-| Return the default rule of S if it has one, NULL otherwise.  |
-`-------------------------------------------------------------*/
-
-static rule *
-state_default_rule (state *s)
-{
-  reductions *reds = s->reductions;
-  rule *default_rule = NULL;
-  int cmax = 0;
-  int i;
-
-  /* No need for a look-ahead.  */
-  if (s->consistent)
-    return reds->rules[0];
-
-  /* 1. Each reduction is possibly masked by the look-ahead tokens on which
-     we shift (S/R conflicts)...  */
-  bitset_zero (shift_set);
-  {
-    transitions *trans = s->transitions;
-    FOR_EACH_SHIFT (trans, i)
-      {
-	/* If this state has a shift for the error token, don't use a
-	     default rule.  */
-	if (TRANSITION_IS_ERROR (trans, i))
-	  return NULL;
-	bitset_set (shift_set, TRANSITION_SYMBOL (trans, i));
-      }
-  }
-
-  /* 2. Each reduction is possibly masked by the look-ahead tokens on which
-     we raise an error (due to %nonassoc).  */
-  {
-    errs *errp = s->errs;
-    for (i = 0; i < errp->num; i++)
-      if (errp->symbols[i])
-	bitset_set (shift_set, errp->symbols[i]->number);
-  }
-
-  for (i = 0; i < reds->num; ++i)
-    {
-      int count = 0;
-
-      /* How many non-masked look-ahead tokens are there for this
-	 reduction?  */
-      bitset_andn (look_ahead_set, reds->look_ahead_tokens[i], shift_set);
-      count = bitset_count (look_ahead_set);
-
-      if (count > cmax)
-	{
-	  cmax = count;
-	  default_rule = reds->rules[i];
-	}
-
-      /* 3. And finally, each reduction is possibly masked by previous
-	 reductions (in R/R conflicts, we keep the first reductions).
-	 */
-      bitset_or (shift_set, shift_set, reds->look_ahead_tokens[i]);
-    }
-
-  return default_rule;
-}
-
-
-/*--------------------------------------------------------------------------.
-| Report a reduction of RULE on LOOK_AHEAD_TOKEN (which can be `default').  |
-| If not ENABLED, the rule is masked by a shift or a reduce (S/R and        |
-| R/R conflicts).                                                           |
-`--------------------------------------------------------------------------*/
+/*-------------------------------------------------------------------------.
+| Report a reduction of RULE on LOOKAHEAD_TOKEN (which can be `default').  |
+| If not ENABLED, the rule is masked by a shift or a reduce (S/R and       |
+| R/R conflicts).                                                          |
+`-------------------------------------------------------------------------*/
 
 static void
 print_reduction (FILE *out, size_t width,
-		 const char *look_ahead_token,
+		 const char *lookahead_token,
 		 rule *r, bool enabled)
 {
   int j;
-  fprintf (out, "    %s", look_ahead_token);
-  for (j = width - strlen (look_ahead_token); j > 0; --j)
+  fprintf (out, "    %s", lookahead_token);
+  for (j = width - strlen (lookahead_token); j > 0; --j)
     fputc (' ', out);
   if (!enabled)
     fputc ('[', out);
@@ -307,34 +241,39 @@ print_reductions (FILE *out, state *s)
 {
   transitions *trans = s->transitions;
   reductions *reds = s->reductions;
-  rule *default_rule = NULL;
+  rule *default_reduction = NULL;
   size_t width = 0;
   int i, j;
+  bool default_reduction_only = true;
 
   if (reds->num == 0)
     return;
 
-  default_rule = state_default_rule (s);
+  if (yydefact[s->number] != 0)
+    default_reduction = &rules[yydefact[s->number] - 1];
 
-  bitset_zero (shift_set);
+  bitset_zero (no_reduce_set);
   FOR_EACH_SHIFT (trans, i)
-    bitset_set (shift_set, TRANSITION_SYMBOL (trans, i));
+    bitset_set (no_reduce_set, TRANSITION_SYMBOL (trans, i));
+  for (i = 0; i < s->errs->num; ++i)
+    if (s->errs->symbols[i])
+      bitset_set (no_reduce_set, s->errs->symbols[i]->number);
 
-  /* Compute the width of the look-ahead token column.  */
-  if (default_rule)
+  /* Compute the width of the lookahead token column.  */
+  if (default_reduction)
     width = strlen (_("$default"));
 
-  if (reds->look_ahead_tokens)
+  if (reds->lookahead_tokens)
     for (i = 0; i < ntokens; i++)
       {
-	bool count = bitset_test (shift_set, i);
+	bool count = bitset_test (no_reduce_set, i);
 
 	for (j = 0; j < reds->num; ++j)
-	  if (bitset_test (reds->look_ahead_tokens[j], i))
+	  if (bitset_test (reds->lookahead_tokens[j], i))
 	    {
 	      if (! count)
 		{
-		  if (reds->rules[j] != default_rule)
+		  if (reds->rules[j] != default_reduction)
 		    max_length (&width, symbols[i]->tag);
 		  count = true;
 		}
@@ -352,32 +291,38 @@ print_reductions (FILE *out, state *s)
   fputc ('\n', out);
   width += 2;
 
-  /* Report look-ahead tokens (or $default) and reductions.  */
-  if (reds->look_ahead_tokens)
+  /* Report lookahead tokens (or $default) and reductions.  */
+  if (reds->lookahead_tokens)
     for (i = 0; i < ntokens; i++)
       {
 	bool defaulted = false;
-	bool count = bitset_test (shift_set, i);
+	bool count = bitset_test (no_reduce_set, i);
+        if (count)
+          default_reduction_only = false;
 
 	for (j = 0; j < reds->num; ++j)
-	  if (bitset_test (reds->look_ahead_tokens[j], i))
+	  if (bitset_test (reds->lookahead_tokens[j], i))
 	    {
 	      if (! count)
 		{
-		  if (reds->rules[j] != default_rule)
-		    print_reduction (out, width,
-				     symbols[i]->tag,
-				     reds->rules[j], true);
+		  if (reds->rules[j] != default_reduction)
+                    {
+                      default_reduction_only = false;
+                      print_reduction (out, width,
+                                       symbols[i]->tag,
+                                       reds->rules[j], true);
+                    }
 		  else
 		    defaulted = true;
 		  count = true;
 		}
 	      else
 		{
+                  default_reduction_only = false;
 		  if (defaulted)
 		    print_reduction (out, width,
 				     symbols[i]->tag,
-				     default_rule, true);
+				     default_reduction, true);
 		  defaulted = false;
 		  print_reduction (out, width,
 				   symbols[i]->tag,
@@ -386,9 +331,17 @@ print_reductions (FILE *out, state *s)
 	    }
       }
 
-  if (default_rule)
-    print_reduction (out, width,
-		     _("$default"), default_rule, true);
+  if (default_reduction)
+    {
+      char *default_reductions =
+        muscle_percent_define_get ("lr.default-reductions");
+      print_reduction (out, width, _("$default"), default_reduction, true);
+      aver (0 == strcmp (default_reductions, "most")
+            || (0 == strcmp (default_reductions, "consistent")
+                && default_reduction_only)
+            || (reds->num == 1 && reds->rules[0]->number == 0));
+      free (default_reductions);
+    }
 }
 
 
@@ -417,7 +370,7 @@ static void
 print_state (FILE *out, state *s)
 {
   fputs ("\n\n", out);
-  fprintf (out, _("state %d"), s->number);
+  fprintf (out, _("State %d"), s->number);
   fputc ('\n', out);
   print_core (out, s);
   print_actions (out, s);
@@ -464,7 +417,7 @@ print_grammar (FILE *out)
 	buffer[0] = 0;
 	column = strlen (tag);
 	fputs (tag, out);
-	END_TEST (50);
+	END_TEST (65);
 	sprintf (buffer, " (%d)", i);
 
 	for (r = 0; r < nrules; r++)
@@ -508,14 +461,16 @@ print_grammar (FILE *out)
 
       if (left_count > 0)
 	{
-	  END_TEST (50);
+	  END_TEST (65);
 	  sprintf (buffer + strlen (buffer), _(" on left:"));
 
 	  for (r = 0; r < nrules; r++)
 	    {
-	      END_TEST (65);
 	      if (rules[r].lhs->number == i)
-		sprintf (buffer + strlen (buffer), " %d", r);
+		{
+		  END_TEST (65);
+		  sprintf (buffer + strlen (buffer), " %d", r);
+		}
 	    }
 	}
 
@@ -523,7 +478,7 @@ print_grammar (FILE *out)
 	{
 	  if (left_count > 0)
 	    sprintf (buffer + strlen (buffer), ",");
-	  END_TEST (50);
+	  END_TEST (65);
 	  sprintf (buffer + strlen (buffer), _(" on right:"));
 	  for (r = 0; r < nrules; r++)
 	    {
@@ -552,7 +507,8 @@ print_results (void)
 
   reduce_output (out);
   grammar_rules_partial_print (out,
-			       _("Rules never reduced"), rule_never_reduced_p);
+			       _("Rules useless in parser due to conflicts"),
+                                 rule_useless_in_parser_p);
   conflicts_output (out);
 
   print_grammar (out);
@@ -562,12 +518,10 @@ print_results (void)
   if (report_flag & report_itemsets)
     new_closure (nritems);
   /* Storage for print_reductions.  */
-  shift_set =  bitset_create (ntokens, BITSET_FIXED);
-  look_ahead_set = bitset_create (ntokens, BITSET_FIXED);
+  no_reduce_set =  bitset_create (ntokens, BITSET_FIXED);
   for (i = 0; i < nstates; i++)
     print_state (out, states[i]);
-  bitset_free (shift_set);
-  bitset_free (look_ahead_set);
+  bitset_free (no_reduce_set);
   if (report_flag & report_itemsets)
     free_closure ();
 
