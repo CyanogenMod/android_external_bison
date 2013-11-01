@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-LOCAL_PATH := $(call my-dir)
+LOCAL_PATH:= $(call my-dir)
 
 ###########################################
 include $(CLEAR_VARS)
@@ -108,6 +108,8 @@ ifeq ($(BUILD_OS),darwin)
 LOCAL_SRC_FILES += \
     lib/error.c \
     lib/fpending.c \
+    lib/getdelim.c \
+    lib/getline.c \
     lib/getopt.c \
     lib/getopt1.c \
     lib/obstack.c \
@@ -119,6 +121,8 @@ LOCAL_SRC_FILES += \
     lib/strchrnul.c \
     lib/strerror-override.c \
     lib/strerror.c \
+    lib/strndup.c \
+    lib/strnlen.c \
     lib/strverscmp.c \
     lib/wcwidth.c
 endif
